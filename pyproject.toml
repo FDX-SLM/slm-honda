@@ -1,0 +1,118 @@
+[project]
+name = "slm-sales-coach"
+version = "0.1.0"
+description = "Fine-tuning & evaluation pipeline for a Vietnamese iPhone sales-coach SLM (Qwen3.5-9B)."
+requires-python = ">=3.11,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "SLM Sales Coach Team" }]
+keywords = ["llm", "fine-tuning", "qlora", "evaluation", "vietnamese", "sales-coach"]
+
+# Core dependencies: cross-platform, torch-free, installable on CPU/Windows.
+# Everything Phase-1 (config + data + utils + metrics) needs lives here, so a plain
+# `uv sync` followed by `uv run pytest` works with no GPU and no API keys.
+dependencies = [
+    # config & CLI
+    "pydantic>=2.7,<3",
+    "pyyaml>=6.0,<7",
+    "typer>=0.12,<1.0",
+    "rich>=13.7",
+    "python-dotenv>=1.0",
+    # data handling — transformers/datasets here pull tokenizers + arrow only (no torch)
+    "numpy>=1.26,<3",
+    "transformers>=4.56,<5",
+    "datasets>=3.0,<5",
+    "tenacity>=8.3",
+]
+
+[project.optional-dependencies]
+# --- GPU training stack. CPU-installable for dry-run; real speed needs CUDA. ---
+train = [
+    "torch>=2.3",
+    "trl>=0.11",
+    "peft>=0.12",
+    "accelerate>=0.33",
+    "bitsandbytes>=0.43",
+    "sentencepiece>=0.2",
+    "einops>=0.8",
+    "hf_xet>=1.0",
+]
+# --- Linux + CUDA ONLY. Do NOT install on Windows/CPU (no prebuilt wheels). ---
+gpu = [
+    "unsloth>=2025.1",
+    "flash-attn>=2.5",
+]
+# --- Evaluation: LLM judges (GPT + Gemini), lm-eval harness. ---
+eval = [
+    "openai>=1.40",
+    "google-genai>=0.3",
+    "lm-eval>=0.4.3",
+    "langdetect>=1.0.9",
+]
+# --- Export / quantization. autoawq needs CUDA; GGUF needs the llama.cpp tool. ---
+export = [
+    "autoawq>=0.2",
+]
+# --- Experiment tracking (Langfuse: qualitative sample-generation logging). ---
+# Pinned to the v2 SDK line, whose client API this repo targets.
+tracking = [
+    "langfuse>=2.40,<3",
+]
+# --- Metric charts (loss curves, per-mode bars). CSV tables need no extra; PNGs need this. ---
+viz = [
+    "matplotlib>=3.8",
+]
+
+[dependency-groups]
+# Installed by default on `uv sync` (uv treats `dev` as a default group).
+dev = [
+    "pytest>=8.2",
+    "ruff>=0.5",
+    "black>=24.4",
+    "pre-commit>=3.7",
+    "ipykernel>=6.29",
+]
+
+# --- PyTorch CUDA build (Windows). RTX 50-series (Blackwell, sm_120) needs cu128+. ---
+# Only used on win32 for `torch` (explicit index); other platforms get the default PyPI wheel.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slm_coach"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "D"]
+# D203/D213: conflicting docstring rules. UP042: `str, Enum` is the pydantic-friendly idiom
+# (StrEnum changes str()/format() semantics), kept intentionally.
+ignore = ["D203", "D213", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+# B008: Typer *requires* `typer.Option(...)` in argument defaults — not a real bug here.
+"scripts/**" = ["D104", "B008"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]

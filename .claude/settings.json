@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": [
+      "Write(.env)",
+      "Edit(.env)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path'); case \"$f\" in *.py) uv run ruff check --fix \"$f\" >/dev/null 2>&1; uv run black \"$f\" >/dev/null 2>&1 ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

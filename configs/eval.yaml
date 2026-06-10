@@ -1,0 +1,38 @@
+# Evaluation configuration. See docs/SPEC.md §8 and .claude/rules/eval.md.
+defaults: base.yaml
+
+gold: "data/gold/gold_test.jsonl"
+
+# 7-criteria rubric weights (weighted mean on the 1-5 scale, rescaled to /10 in reports).
+rubric_weights:
+  factuality: 2.0
+  safety: 2.0
+  helpfulness: 1.5
+  tone: 1.0
+  completeness: 1.0
+  format: 0.5
+  language_quality: 1.0
+
+# Multi-judge LLM-as-judge: GPT + Gemini ONLY. Never Claude/DeepSeek (teacher models).
+judges: ["gpt", "gemini"]
+judge_models:
+  gpt: "gpt-4o"
+  gemini: "gemini-1.5-pro"
+
+# Offline batch-generation decoding settings.
+generation:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  batch_size: 8
+
+# Also compare each answer against the gold reference (pairwise A/B win-rate).
+pairwise: true
+
+# Optional offline generation latency (p50/p95 of model.generate), NOT a serving benchmark.
+latency:
+  measure: true
+  n_samples: 50
+
+# The most important output: scores sliced by each of the 7 conversation modes.
+per_mode_breakdown: true

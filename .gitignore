@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Virtual environments (uv) ---
+.venv/
+venv/
+
+# --- Secrets ---
+.env
+.env.local
+
+# --- Runtime artifacts (populated by the data team / training / eval) ---
+data/*
+!data/README.md
+checkpoints/*
+!checkpoints/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# --- Tracking ---
+mlruns/
+mlartifacts/
+.langfuse/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

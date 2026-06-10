@@ -1,0 +1,15 @@
+# Shared configuration: base model, paths, seed, tracking, data contract.
+# Other config files declare `defaults: base.yaml` and override the sections they need.
+
+model_name: "Qwen/Qwen3.5-9B"   # base SLM (config-driven; swap freely, never downloaded in tests)
+output_dir: "checkpoints"
+report_dir: "outputs"
+seed: 42
+
+tracking:
+  langfuse: true                  # sample generations logged when LANGFUSE_* keys are present in .env
+
+data:
+  dir: "data"
+  keep_audit_status: ["approved"] # only train on approved records
+  lang: "vi"

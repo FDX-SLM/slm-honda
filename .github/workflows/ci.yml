@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies (core + dev only — no GPU extras)
+        run: uv sync
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run black --check .
+
+      - name: Test
+        run: uv run pytest

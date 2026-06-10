@@ -1,0 +1,51 @@
+# T1 — fast LoRA SFT baseline (16-bit LoRA, single stage). See docs/SPEC.md §1, §7.
+defaults: base.yaml
+
+run_name: "sft_lora"
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: "all-linear"
+  bias: "none"
+
+quant:
+  load_in_4bit: false             # T1 is plain LoRA, not QLoRA
+
+model:
+  max_seq_len: 4096
+  attn_implementation: "flash_attention_2"
+  use_unsloth: true
+  dtype: "bfloat16"
+
+sft:
+  epochs: 1
+  lr: 2.0e-4
+  batch_size: 4
+  grad_accum: 4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  lr_scheduler_type: "cosine"
+  max_seq_len: 4096
+  train_on_responses_only: true
+  multiturn_masking: true
+  packing: false
+  save_steps: 200
+  eval_steps: 200
+  logging_steps: 10
+  save_total_limit: 3
+  load_best_model_at_end: true
+  metric_for_best_model: "rubric_avg"
+  greater_is_better: true
+  early_stopping_patience: 3
+  mixture:
+    multi_turn: 0.66
+    single: 0.34
+
+eval_during_training:
+  enabled: true
+  gold_subset: "data/gold/gold_test.jsonl"
+  subset_size: 32
+  max_new_tokens: 512
+  use_judge: false                # reduced rubric only during training (fast)

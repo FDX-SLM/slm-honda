@@ -1,0 +1,31 @@
+# Pre-commit hooks run through uv so the project's pinned tool versions are used.
+# Install once with:  uv run pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint + autofix)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        require_serial: true
+      - id: ruff-format-check
+        name: ruff format check
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+        require_serial: true
+      - id: black
+        name: black
+        entry: uv run black
+        language: system
+        types: [python]
+        require_serial: true
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
