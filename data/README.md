@@ -8,10 +8,15 @@ gates every sample through the [graph oracle](../src/slm_coach/oracle.py). All c
 data/
 ├── sft/*.jsonl          # supervised fine-tuning (5 groups, §5.1–5.5)
 ├── preference/*.jsonl   # DPO preference pairs (6 types, §5.6)
-└── gold/
-    ├── gold_test.jsonl  # eval set (seed 999), labeled with the expected root cause
-    └── eval_hard.jsonl  # 20 hand-written messy complaints (cue hidden in noise)
+├── gold/
+│   ├── gold_test.jsonl  # eval set (seed 999), labeled with the expected root cause
+│   └── eval_hard.jsonl  # 20 hand-written messy complaints (cue hidden in noise)
+└── samples/             # inspection-only (NOT trained): e.g. authored_sft.jsonl
 ```
+
+> ⚠️ Training globs **every** `*.jsonl` under `data/sft/` (and `data/preference/`). Keep **only the
+> training file** there. The pure-authored inspection copy (`--source authored`) goes to
+> `data/samples/`, not `data/sft/`, so it is not double-loaded into training.
 
 Generate + validate:
 
