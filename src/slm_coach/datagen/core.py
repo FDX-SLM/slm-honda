@@ -333,24 +333,33 @@ def build_abstention(rng: random.Random, *, kind: str = "vague") -> Case:
         {"rc": a, "likelihood": "low", "why": "no distinguishing cue in the complaint"},
         {"rc": b, "likelihood": "low", "why": "would need a confirming signal not present here"},
     ]
-    to_confirm = [
-        "which system shows the feature as active (web/app/vehicle)",
-        "whether the customer sees any error code or a Subscribe prompt",
-        "whether an entitlement record exists for the VIN",
-    ]
     think = (
         "The complaint has no distinguishing cue: it does not say whether the feature shows "
         "active anywhere, whether the car is offline, or whether the app keeps asking to "
         "subscribe. With no single cue, I do not commit to a root cause; I keep confidence low "
         f"({confidence:.2f}) and route to a human after listing what to confirm."
     )
-    resolution = {
+    resolution = make_abstention_resolution(confidence, evidence, differential)
+    return Case(
+        leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+    )
+
+
+def make_abstention_resolution(
+    confidence: float, evidence: list[str], differential: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Build the abstention resolution package (routes to human, NO fabricated runbook)."""
+    return {
         "diagnosis": {
             "leading_root_cause": ABSTAIN,
-            "confidence": confidence,
+            "confidence": round(confidence, 2),
             "differential": differential,
             "evidence_in_ticket": evidence,
-            "to_confirm": to_confirm,
+            "to_confirm": [
+                "which system shows the feature as active (web/app/vehicle)",
+                "whether the customer sees any error code or a Subscribe prompt",
+                "whether an entitlement record exists for the VIN",
+            ],
         },
         "runbook_id": None,
         "why_plain": (
@@ -378,9 +387,44 @@ def build_abstention(rng: random.Random, *, kind: str = "vague") -> Case:
             "diagram_mermaid": "sequenceDiagram\n  participant A as Agent\n  participant H as Human triage\n  A->>H: insufficient evidence -> route",
         },
     }
-    return Case(
-        leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+
+
+def authored_case(
+    rc: str,
+    complaint: str,
+    evidence: list[str],
+    think: str,
+    *,
+    confidence: float,
+) -> Case:
+    """Build a Case from CLAUDE-AUTHORED language (complaint + think) + ground-truth resolution.
+
+    The natural-language richness (complaint voice, reasoning phrasing) is authored by the model;
+    the factual resolution package is assembled from ground truth, so facts never drift. Caller
+    gates the result with the oracle (``trust_rc=True``).
+    """
+    alt_rc, alt_why = _DIFFERENTIAL_ALT[rc]
+    differential = [
+        {"rc": rc, "likelihood": "high", "why": CUE_LIBRARY[rc]["one_line"]},
+        {"rc": alt_rc, "likelihood": "low", "why": alt_why},
+    ]
+    resolution = build_resolution(
+        rc, confidence=confidence, evidence=evidence, differential=differential
     )
+    return Case(leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
+
+
+def authored_abstention(
+    complaint: str, evidence: list[str], think: str, *, confidence: float = 0.35
+) -> Case:
+    """Claude-authored abstention case (ambiguous / out-of-catalog) + ground-truth routing."""
+    a, b = ROOT_CAUSES[0], ROOT_CAUSES[1]
+    differential = [
+        {"rc": a, "likelihood": "low", "why": "no distinguishing cue present in the complaint"},
+        {"rc": b, "likelihood": "low", "why": "would need a confirming signal not stated here"},
+    ]
+    resolution = make_abstention_resolution(confidence, evidence, differential)
+    return Case(leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
 
 
 def _short_fragment(text: str) -> str:

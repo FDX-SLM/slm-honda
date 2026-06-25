@@ -262,15 +262,21 @@ def group_knowledge(rng: random.Random, n: int) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def generate_sft(seed: int, *, limit: int | None = None) -> list[dict[str, Any]]:
+def generate_sft(
+    seed: int, *, limit: int | None = None, source: str = "mixed"
+) -> list[dict[str, Any]]:
     """Generate the full SFT set across the 5 groups, scaled by ``limit`` (None = full mix).
 
     Args:
         seed: RNG seed (spec quickstart uses 42).
         limit: Optional cap on TOTAL records; group sizes scale proportionally to :data:`DEFAULT_MIX`.
+        source: Where the complaint/abstention LANGUAGE comes from —
+            ``"authored"`` = only Claude-authored seeds (richest, smaller) + template knowledge Q&A;
+            ``"template"`` = only the rule-based generator (largest, least diverse);
+            ``"mixed"`` (default) = Claude-authored seeds as the rich core, template top-up for volume.
 
     Returns:
-        A shuffled list of SFT records (all resolution samples passed the oracle).
+        A shuffled list of SFT records (every resolution sample passed the oracle).
     """
     rng = random.Random(seed)
     total_default = sum(DEFAULT_MIX.values())
@@ -280,11 +286,27 @@ def generate_sft(seed: int, *, limit: int | None = None) -> list[dict[str, Any]]
         scale = limit / total_default
         sizes = {k: max(1, round(v * scale)) for k, v in DEFAULT_MIX.items()}
 
-    records: list[dict[str, Any]] = []
-    records += group_complaint_resolution(rng, sizes["complaint_resolution"])
+    authored: list[dict[str, Any]] = []
+    if source in ("authored", "mixed"):
+        from slm_coach.datagen.authored import generate_authored
+
+        authored = generate_authored()
+
+    if source == "authored":
+        records = list(authored)
+        records += group_knowledge(rng, sizes["knowledge"])  # runbook-field Q&A (factual)
+        rng.shuffle(records)
+        return records
+
+    # Count how many of each group the authored seeds already cover (RC slices → complaint_resolution).
+    n_auth_cr = sum(1 for r in authored if r["mode"] in ("tcu_offline", "cache_stale", "eligibility"))
+    n_auth_abs = sum(1 for r in authored if r["mode"] == "abstention")
+
+    records: list[dict[str, Any]] = list(authored)
+    records += group_complaint_resolution(rng, max(0, sizes["complaint_resolution"] - n_auth_cr))
     records += group_knowledge(rng, sizes["knowledge"])
     records += group_differential(rng, sizes["differential"])
     records += group_distractors(rng, sizes["distractor"])
-    records += group_abstention(rng, sizes["abstention"])
+    records += group_abstention(rng, max(0, sizes["abstention"] - n_auth_abs))
     rng.shuffle(records)
     return records

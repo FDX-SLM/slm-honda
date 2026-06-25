@@ -67,16 +67,31 @@ def test_generated_cases_pass_oracle():
 
 
 def test_generate_sft_balanced_and_valid():
-    records = generate_sft(42, limit=140)
+    # Mixed (default) is balanced across slices.
+    records = generate_sft(42, limit=300, source="mixed")
     modes = {r["mode"] for r in records}
     assert {"tcu_offline", "cache_stale", "eligibility", "abstention", "knowledge"} <= modes
-    # every complaint→resolution record's assistant turn parses + passes the oracle
-    for r in records:
+    # Template records pass the STRICT oracle (incl. the RC↔cue keyword rule).
+    for r in generate_sft(42, limit=140, source="template"):
         msgs = r["messages"]
         if msgs[0]["role"] == "system":
             think, res = parse_output(msgs[-1]["content"])
             assert res is not None
             assert check_resolution(msgs[1]["content"], think, res).ok
+
+
+def test_authored_seeds_pass_oracle():
+    # Claude-authored seeds: facts faithful (trust the author's RC label; honesty rules still run).
+    from slm_coach.datagen.authored import generate_authored
+
+    recs = generate_authored()  # raises if any seed fails the oracle
+    assert len(recs) >= 50
+    for r in recs:
+        msgs = r["messages"]
+        if msgs[0]["role"] == "system":
+            think, res = parse_output(msgs[-1]["content"])
+            assert res is not None
+            assert check_resolution(msgs[1]["content"], think, res, trust_rc=True).ok
 
 
 def test_generate_dpo_six_types():

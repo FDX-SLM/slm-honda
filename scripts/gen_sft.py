@@ -32,13 +32,19 @@ def main(
     out: Path = typer.Option(Path("data/sft/train_sft.jsonl"), "--out", help="Output JSONL path."),
     seed: int = typer.Option(42, "--seed", help="RNG seed."),
     limit: int = typer.Option(None, "--limit", help="Cap TOTAL records (smoke); default full mix."),
+    source: str = typer.Option(
+        "mixed", "--source",
+        help="Language source: authored (Claude-written, richest) | mixed (authored core + template fill) | template.",
+    ),
     json_logs: bool = typer.Option(False, "--json-logs", help="Emit JSON-structured logs."),
 ) -> None:
     """Generate and write the SFT JSONL."""
     bootstrap()
     configure_logging(json_logs=json_logs)
     set_seed(seed)
-    records = generate_sft(seed, limit=limit)
+    if source not in ("authored", "mixed", "template"):
+        raise typer.BadParameter("source must be authored | mixed | template")
+    records = generate_sft(seed, limit=limit, source=source)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:
         for r in records:

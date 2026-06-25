@@ -30,6 +30,7 @@ from typing import Any
 
 from slm_coach.ground_truth import (
     ABSTAIN,
+    ALL_LABELS,
     CUE_LIBRARY,
     RC_TO_RUNBOOK,
     ROOT_CAUSES,
@@ -327,6 +328,8 @@ def check_resolution(
     complaint: str,
     think: str,
     resolution: dict[str, Any],
+    *,
+    trust_rc: bool = False,
 ) -> OracleResult:
     """Run all five oracle rules on one parsed resolution package.
 
@@ -334,6 +337,10 @@ def check_resolution(
         complaint: The raw customer complaint (the user turn).
         think: The model's ``<think>`` reasoning text.
         resolution: The parsed resolution-package dict.
+        trust_rc: When ``True``, skip rule 3 (RC↔cue keyword match) and trust the asserted
+            ``leading_root_cause``. Used for **Claude-authored** training data, where the author —
+            not the keyword heuristic — is the authority on the cue→RC mapping. The honesty-critical
+            rules (no fabricated telemetry, cue grounding, calibration, runbook fidelity) still run.
 
     Returns:
         An :class:`OracleResult` with the overall verdict and per-rule flags.
@@ -357,7 +364,12 @@ def check_resolution(
 
     # --- Rule 3: RC ↔ cue match ---
     detected = detect_rcs(complaint)
-    if leading == ABSTAIN:
+    if trust_rc:
+        # Author-asserted RC: trust the label, still require it to be a known value.
+        rc_cue_match = leading in ALL_LABELS
+        if not rc_cue_match:
+            failures.append(f"unknown leading_root_cause: {leading!r}")
+    elif leading == ABSTAIN:
         # Abstention is valid when there is no single distinguishing cue (or out-of-catalog).
         rc_cue_match = len(detected) != 1
         if not rc_cue_match:
