@@ -551,6 +551,10 @@ RUNBOOKS: dict[str, dict[str, Any]] = {
             "refresh/re-login; confirm once it has synced. Do not imply the customer did anything "
             "wrong."
         ),
+        "customer_action": (
+            "In the meantime, please pull down to refresh in the app, or log out and back in, and "
+            "the feature should show up."
+        ),
         "similar_incident": "INC-0610",
         "last_reviewed": "2026-06",
     },
@@ -617,6 +621,10 @@ RUNBOOKS: dict[str, dict[str, Any]] = {
             "Explain that the car needs to reconnect; give simple steps (move to an open area, "
             "start the engine); set the expectation that it syncs within minutes once online; "
             "offer to follow up. Avoid blaming the customer."
+        ),
+        "customer_action": (
+            "When you get a chance, please move the car to an open area and start the engine for a "
+            "few minutes so it can reconnect; the feature should sync within minutes."
         ),
         "similar_incident": "INC-0742",
         "last_reviewed": "2026-06",
@@ -685,6 +693,10 @@ RUNBOOKS: dict[str, dict[str, Any]] = {
             "Reassure the customer that payment went through correctly (not their fault); explain "
             "that an internal activation rule is being fixed; commit to a concrete ETA (24h); "
             "proactively offer the credit. Never blame the customer or ask them to repurchase."
+        ),
+        "customer_action": (
+            "There's nothing you need to do on your end; we're correcting the activation rule now "
+            "and will confirm within 24 hours."
         ),
         "similar_incident": "INC-0501",
         "last_reviewed": "2026-06",

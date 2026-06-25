@@ -199,13 +199,24 @@ def _render_artifacts(rc: str, rb: dict[str, Any], evidence: list[str]) -> dict[
 
 
 def _customer_email(rb: dict[str, Any]) -> str:
-    """Compose the customer-facing email from the runbook (why_plain + communication tone)."""
-    return (
-        "Hi, thanks for reaching out. "
-        f"{rb['why_plain']} "
-        f"{rb['customer_communication'].split('.')[0]}. "
-        "I'll follow up to confirm everything is working."
-    )
+    """Compose a clean, customer-facing email — NOT the internal communication directive.
+
+    Pure customer voice: greeting → plain-English explanation (why_plain) → the action the
+    customer should take (customer_action) → a proactive credit when policy offers one → a
+    follow-up close. The internal ``customer_communication`` guidance is deliberately excluded
+    (it's a directive for the agent, not text for the customer).
+    """
+    parts = ["Hi, thanks for reaching out.", rb["why_plain"]]
+    if rb.get("customer_action"):
+        parts.append(rb["customer_action"])
+    comp = rb["compensation_policy"]
+    if comp.get("when_proactive"):
+        parts.append(
+            "As an apology for the inconvenience, we've applied a one-month service credit to "
+            "your subscription."
+        )
+    parts.append("I'll follow up to confirm everything is working.")
+    return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------
