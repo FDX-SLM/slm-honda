@@ -318,6 +318,104 @@ AUTHORED_ABSTAIN: list[dict[str, Any]] = [
         "evidence": [],
         "think": "'Just isn't' with no detail is not enough to distinguish a stale cache from connectivity or eligibility. I'll keep confidence low, list what to confirm, and route to a human.",
     },
+    # --- H3: not actually a fault → don't invent a root cause ---
+    {
+        "complaint": "Just confirming — my remote start works great. Does my subscription renew next month?",
+        "evidence": [],
+        "think": "This isn't a fault report at all: the customer says the feature works great and is asking a billing/renewal question. There is no symptom to diagnose, so I must not fabricate a root cause; I route this to a human (billing) rather than force one of the failure classes.",
+    },
+    {
+        "complaint": "Everything's working fine, I just wanted to ask how I upgrade to the Touring plan.",
+        "evidence": [],
+        "think": "Nothing is broken here — it's a sales/upgrade question, not an entitlement failure. With no fault symptom there is no root cause to assign, so I route to a human instead of inventing one.",
+    },
+    {
+        "complaint": "No issues, just checking — will my remote features keep working if I switch phones?",
+        "evidence": [],
+        "think": "The customer states there are no issues and is asking a general how-to question. There is no malfunction to diagnose, so I abstain from assigning a root cause and route the question to a human.",
+    },
+]
+
+
+# --- E: thin-cue cases → calibrated LOWER confidence (~0.6) -----------------------------------
+AUTHORED_THIN: dict[str, list[dict[str, Any]]] = {
+    "ELIGIBILITY_RULE_CONFLICT": [
+        {
+            "complaint": "The app keeps asking me to subscribe again.",
+            "evidence": ["keeps asking me to subscribe again"],
+            "think": "The only cue is the app repeatedly asking to subscribe, which leans toward an eligibility block rather than a cache or connectivity issue. But there's no detail on the vehicle, region, or whether it ever showed active, so I stay tentative at about 0.6 and lean on what to confirm.",
+            "confidence": 0.6,
+        },
+        {
+            "complaint": "It won't let me use the plan I paid for, still says subscribe.",
+            "evidence": ["still says subscribe", "plan I paid for"],
+            "think": "Paid but still prompted to subscribe points toward eligibility, yet with no combo or persistence detail I can't be confident; I'll keep it around 0.6 and list the eligibility checks.",
+            "confidence": 0.6,
+        },
+    ],
+    "ENTITLEMENT_CACHE_STALE": [
+        {
+            "complaint": "It shows active on the site but not in the app.",
+            "evidence": ["active on the site but not in the app"],
+            "think": "Active on the site but not the app suggests a stale cached view, but it's a single data point with no history of it working or flickering, so I keep confidence modest near 0.62 and confirm the record before invalidating.",
+            "confidence": 0.62,
+        },
+    ],
+    "TCU_OFFLINE": [
+        {
+            "complaint": "Remote start times out and the car's in a garage.",
+            "evidence": ["times out", "car's in a garage"],
+            "think": "A timeout with the car in a garage hints at lost connectivity, but I have no detail on how long it's been parked or whether it shows active, so I stay around 0.62 and verify the unit's reachability.",
+            "confidence": 0.62,
+        },
+    ],
+}
+
+# --- H1: conflicting cues across RCs → differential, pick the dominant branch ------------------
+_CONFLICT_DIFF = [
+    {"rc": "TCU_OFFLINE", "likelihood": "high", "why": "a car-side timeout while parked with no signal"},
+    {"rc": "ENTITLEMENT_CACHE_STALE", "likelihood": "medium", "why": "the 'active but won't turn on' wording could be a stale view, but the garage and car-side stall point to the vehicle being offline"},
+]
+AUTHORED_CONFLICT: list[dict[str, Any]] = [
+    {
+        "leading": "TCU_OFFLINE",
+        "complaint": "The app says it's active but it won't turn on — and my car's also been in the garage all week.",
+        "evidence": ["says it's active but it won't turn on", "in the garage all week"],
+        "think": "There are two readings here: 'active but won't turn on' could be a stale cache, but the car being in the garage all week strongly suggests the vehicle is offline and the command can't reach it. Both deserve a place in the differential; I weight TCU offline higher because the failure is a car-side stall, and keep confidence moderate (~0.62) pending the connectivity check.",
+        "confidence": 0.62,
+        "differential": _CONFLICT_DIFF,
+    },
+    {
+        "leading": "TCU_OFFLINE",
+        "complaint": "Shows active, just won't respond. The car's been sitting in an underground lot for two weeks now.",
+        "evidence": ["Shows active, just won't respond", "underground lot for two weeks"],
+        "think": "An active-but-unresponsive feature could read as cache, but two weeks in an underground lot makes lost connectivity the stronger explanation for a non-response on the car side. I list both, lead with TCU offline, and hold around 0.64.",
+        "confidence": 0.64,
+        "differential": [
+            {"rc": "TCU_OFFLINE", "likelihood": "high", "why": "two weeks underground with no response is a car-side connectivity stall"},
+            {"rc": "ENTITLEMENT_CACHE_STALE", "likelihood": "medium", "why": "active-but-not-working could be a stale view, but that wouldn't explain the long underground parking"},
+        ],
+    },
+    {
+        "leading": "TCU_OFFLINE",
+        "complaint": "I can see it's active but it won't work, the car has no signal in the basement parking where it's parked.",
+        "evidence": ["it's active but it won't work", "no signal in the basement parking"],
+        "think": "Active-but-not-working hints at cache, yet 'no signal in the basement parking' is a direct connectivity cue that better explains why the car won't act. I keep both in the differential, lead with TCU offline, confidence ~0.63.",
+        "confidence": 0.63,
+        "differential": _CONFLICT_DIFF,
+    },
+]
+
+# --- H2: angry, escalated paid customer → still RC-5, churn high, correct policy ---------------
+AUTHORED_ESCALATED: list[dict[str, Any]] = [
+    {
+        "leading": "ELIGIBILITY_RULE_CONFLICT",
+        "complaint": "I've called three times now. I want a full refund and a free year or I'm leaving. My CR-V Touring in California still won't activate even though I paid.",
+        "evidence": ["called three times", "CR-V Touring in California", "still won't activate", "paid"],
+        "think": "Despite the heat, the diagnosis is unchanged: a paid CR-V Touring in California that won't activate is the eligibility combo being rejected, so no entitlement was created. The repeated calls and threat to leave make churn high, so I'll follow policy and proactively offer the one-month credit — without caving to the full-refund-and-free-year demand, which isn't policy. Confidence ~0.72.",
+        "confidence": 0.72,
+        "churn_override": {"level": "high", "why": "paid customer, called 3+ times, threatening to leave; feels cheated"},
+    },
 ]
 
 
@@ -333,30 +431,10 @@ def generate_authored() -> list[dict[str, Any]]:
     from slm_coach.datagen.core import assistant_content
     from slm_coach.ground_truth import SYSTEM_PROMPT
 
-    for rc, seeds in AUTHORED.items():
-        for seed in seeds:
-            case = authored_case(
-                rc, seed["complaint"], seed["evidence"], seed["think"], confidence=seed["confidence"]
-            )
-            result = check_resolution(case.complaint, case.think, case.resolution, trust_rc=True)
-            if not result.ok:
-                raise ValueError(f"authored {rc} seed failed oracle: {result.failures}\n{seed['complaint']}")
-            records.append(
-                sft_record(
-                    f"sft-auth-{len(records):05d}",
-                    [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": case.complaint},
-                        {"role": "assistant", "content": assistant_content(case.think, case.resolution)},
-                    ],
-                    slice_tag=RC_TO_SLICE[rc],
-                )
-            )
-    for seed in AUTHORED_ABSTAIN:
-        case = authored_abstention(seed["complaint"], seed["evidence"], seed["think"])
+    def _emit(case: Any, slice_tag: str, label: str) -> None:
         result = check_resolution(case.complaint, case.think, case.resolution, trust_rc=True)
         if not result.ok:
-            raise ValueError(f"authored abstain seed failed oracle: {result.failures}\n{seed['complaint']}")
+            raise ValueError(f"authored {label} seed failed oracle: {result.failures}\n{case.complaint}")
         records.append(
             sft_record(
                 f"sft-auth-{len(records):05d}",
@@ -365,14 +443,42 @@ def generate_authored() -> list[dict[str, Any]]:
                     {"role": "user", "content": case.complaint},
                     {"role": "assistant", "content": assistant_content(case.think, case.resolution)},
                 ],
-                slice_tag="abstention",
+                slice_tag=slice_tag,
             )
         )
+
+    # Core RC cases + thin-cue (E) + escalated (H2), all per concrete RC.
+    for rc in AUTHORED:
+        seeds = [*AUTHORED[rc], *AUTHORED_THIN.get(rc, [])]
+        seeds += [s for s in AUTHORED_ESCALATED if s["leading"] == rc]
+        for seed in seeds:
+            case = authored_case(
+                rc, seed["complaint"], seed["evidence"], seed["think"],
+                confidence=seed["confidence"],
+                differential=seed.get("differential"),
+                churn_override=seed.get("churn_override"),
+            )
+            _emit(case, RC_TO_SLICE[rc], rc)
+
+    # H1: conflicting-cue differential cases (slice = differential).
+    for seed in AUTHORED_CONFLICT:
+        case = authored_case(
+            seed["leading"], seed["complaint"], seed["evidence"], seed["think"],
+            confidence=seed["confidence"], differential=seed["differential"],
+        )
+        _emit(case, "differential", "conflict")
+
+    for seed in AUTHORED_ABSTAIN:
+        case = authored_abstention(seed["complaint"], seed["evidence"], seed["think"])
+        _emit(case, "abstention", "abstain")
     return records
 
 
 def authored_counts() -> dict[str, int]:
-    """Per-RC authored-seed counts (for reporting)."""
-    counts = {rc: len(seeds) for rc, seeds in AUTHORED.items()}
+    """Per-slice authored-seed counts (for reporting)."""
+    counts = {rc: len(seeds) + len(AUTHORED_THIN.get(rc, [])) for rc, seeds in AUTHORED.items()}
+    for s in AUTHORED_ESCALATED:
+        counts[s["leading"]] = counts.get(s["leading"], 0) + 1
+    counts["conflict(differential)"] = len(AUTHORED_CONFLICT)
     counts["abstention"] = len(AUTHORED_ABSTAIN)
     return counts

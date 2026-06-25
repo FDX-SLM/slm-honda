@@ -1,0 +1,13 @@
+# máy GPU: cài deps một lần
+uv sync --extra train --extra gpu --extra viz
+
+# SFT (data đọc tự động từ data/sft + data/gold)
+uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen
+
+# DPO (sau SFT)
+uv run python scripts/train_align.py --config configs/dpo.yaml --base qwen \
+    --sft-checkpoint checkpoints/sft_qwen/best
+
+# eval
+uv run python scripts/evaluate.py --config configs/eval.yaml \
+    --model checkpoints/sft_qwen/best --base qwen --run-name eval_sft_qwen

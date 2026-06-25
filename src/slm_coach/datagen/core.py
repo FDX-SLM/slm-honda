@@ -396,21 +396,32 @@ def authored_case(
     think: str,
     *,
     confidence: float,
+    differential: list[dict[str, str]] | None = None,
+    churn_override: dict[str, str] | None = None,
 ) -> Case:
     """Build a Case from CLAUDE-AUTHORED language (complaint + think) + ground-truth resolution.
 
     The natural-language richness (complaint voice, reasoning phrasing) is authored by the model;
     the factual resolution package is assembled from ground truth, so facts never drift. Caller
     gates the result with the oracle (``trust_rc=True``).
+
+    Args:
+        differential: Optional explicit differential (e.g. a conflicting-cue case where the
+            alternative RC is "medium", not "low"). Defaults to leading-high + alt-low.
+        churn_override: Optional churn_risk override (e.g. an escalated, angry repeat caller →
+            "high"). The oracle does not gate churn level, so this stays faithful to policy.
     """
-    alt_rc, alt_why = _DIFFERENTIAL_ALT[rc]
-    differential = [
-        {"rc": rc, "likelihood": "high", "why": CUE_LIBRARY[rc]["one_line"]},
-        {"rc": alt_rc, "likelihood": "low", "why": alt_why},
-    ]
+    if differential is None:
+        alt_rc, alt_why = _DIFFERENTIAL_ALT[rc]
+        differential = [
+            {"rc": rc, "likelihood": "high", "why": CUE_LIBRARY[rc]["one_line"]},
+            {"rc": alt_rc, "likelihood": "low", "why": alt_why},
+        ]
     resolution = build_resolution(
         rc, confidence=confidence, evidence=evidence, differential=differential
     )
+    if churn_override is not None:
+        resolution["churn_risk"] = churn_override
     return Case(leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
 
 
