@@ -1,77 +1,71 @@
-# Data contract (consumed, not created)
+# Data contract (generated from ground truth)
 
-This directory is **gitignored** and populated by the **data team**. This repo only *reads and
-validates* the data — it never creates it (see `docs/SPEC.md` §2–§3). Place files as:
+This directory is **gitignored**. Unlike the earlier sales PoC (which consumed data), PoC6
+**generates** all data from [`src/slm_coach/ground_truth.py`](../src/slm_coach/ground_truth.py) and
+gates every sample through the [graph oracle](../src/slm_coach/oracle.py). All content is **English**.
 
 ```
 data/
-├── sft/*.jsonl          # supervised fine-tuning (single-turn or multi-turn)
-├── reasoning/*.jsonl    # chain-of-thought records
-├── preference/*.jsonl   # preference pairs for DPO/ORPO
-└── gold/gold_test.jsonl # gold test set for evaluation (each case labeled with `mode`)
+├── sft/*.jsonl          # supervised fine-tuning (5 groups, §5.1–5.5)
+├── preference/*.jsonl   # DPO preference pairs (6 types, §5.6)
+└── gold/
+    ├── gold_test.jsonl  # eval set (seed 999), labeled with the expected root cause
+    └── eval_hard.jsonl  # 20 hand-written messy complaints (cue hidden in noise)
 ```
 
-All files are **JSON Lines** (one record per line). Validate a delivery with:
+Generate + validate:
 
 ```bash
+uv run python scripts/gen_sft.py  --seed 42  --out data/sft/train_sft.jsonl
+uv run python scripts/gen_dpo.py  --seed 42  --out data/preference/dpo_pairs.jsonl
+uv run python scripts/gen_eval.py --seed 999 --out data/gold/gold_test.jsonl
 uv run python scripts/validate_data.py --data-dir data/
 ```
 
 ## Common metadata (every record)
 
-`id, data_type, mode, persona, source, lang, version, audit_status`
+`id, data_type, mode, persona, lang, version, audit_status`
 
-- `mode` ∈ the 7 conversation modes (metadata only — it must **never** enter the training
-  sequence): `purchase_intent, comparison, objection_handling, upsell, after_sales,
-  complex_query, edge_case`.
-- Only records with `audit_status == "approved"` are used for training (configurable via
-  `data.keep_audit_status` in `configs/base.yaml`).
+- `mode` is a **slice tag** (metadata only — never enters the training sequence):
+  `tcu_offline, cache_stale, eligibility, abstention, knowledge, differential, distractor`.
+- `lang` is `en`; only `audit_status == "approved"` records are trained on.
 
-## `data_type = "sft"` (single-turn or multi-turn)
+## `data_type = "sft"`
 
 ```json
-{"id":"...","data_type":"sft","conversation_type":"single|multi_turn","mode":"...","persona":"P0x",
- "messages":[{"role":"system","content":"..."},{"role":"user","content":"..."},{"role":"assistant","content":"..."}],
- "lang":"vi","version":"v1","audit_status":"approved"}
+{"id":"sft-cr-00001","data_type":"sft","conversation_type":"single","mode":"tcu_offline",
+ "persona":"internal_agent","lang":"en","version":"poc6-v1","audit_status":"approved",
+ "messages":[
+   {"role":"system","content":"<Appendix A system prompt>"},
+   {"role":"user","content":"<raw customer complaint>"},
+   {"role":"assistant","content":"<think>...reasoning from cues...</think>{<resolution-package JSON>}"}]}
 ```
 
-Loss is computed on **every** assistant turn (train-on-responses-only + multi-turn masking).
+Loss is computed only on the assistant turn (train-on-responses-only); the `<think>` block stays
+literal inside `assistant.content` so non-`<think>`-native models learn it too. Knowledge-augmentation
+records (`mode: "knowledge"`) are plain `user`/`assistant` Q&A over runbook fields (no system turn).
 
-## `data_type = "reasoning"`
+## `data_type = "preference"` (DPO)
 
 ```json
-{"id":"...","data_type":"reasoning","mode":"...","persona":"P0x",
- "situation":"...","reasoning":["step1","step2"],"response":"...","why":"<audit-only, NOT trained>",
- "lang":"vi","version":"v1","audit_status":"approved"}
+{"id":"dpo-fabricated_telemetry-00007","data_type":"preference","mode":"tcu_offline",
+ "bad_type":"fabricated_telemetry","persona":"internal_agent","lang":"en","version":"poc6-v1",
+ "audit_status":"approved",
+ "prompt":[{"role":"system","content":"..."},{"role":"user","content":"..."}],
+ "chosen":[{"role":"assistant","content":"<think>calibrated...</think>{...}"}],
+ "rejected":[{"role":"assistant","content":"<think>webhook delivered at T+28s...</think>{...}"}]}
 ```
 
-At training time the reasoning is folded into the assistant turn as
-`<think>\n{reasoning}\n</think>\n{response}` (toggleable). The `why` field is **audit-only and
-never trained**.
+`bad_type` ∈ `cue_dropped, fabricated_telemetry, overconfident, missing_fields, forced_guess,
+overpromise`. `chosen` passes the oracle; `rejected` deliberately commits that one error.
 
-## `data_type = "preference"` (DPO/ORPO)
+## Gold / eval (`data/gold/gold_test.jsonl`)
 
 ```json
-{"id":"...","data_type":"preference","mode":"...","persona":"P0x","bad_type":"pushy",
- "prompt":[{"role":"user","content":"..."}],
- "chosen":[{"role":"assistant","content":"..."}],
- "rejected":[{"role":"assistant","content":"..."}],
- "lang":"vi","version":"v1","audit_status":"approved"}
+{"id":"eval-00001","mode":"tcu_offline","leading_root_cause":"TCU_OFFLINE",
+ "messages":[{"role":"user","content":"<complaint>"}],
+ "reference":"<gold assistant package>","persona":"internal_agent"}
 ```
 
-## Gold test set (`data/gold/gold_test.jsonl`)
-
-Used by `scripts/evaluate.py`. Canonical (pinned) shape — one object per line, each labeled with
-`mode`. `messages` is the prompt context (no assistant turn); `reference` is the senior/gold
-answer the judges compare against:
-
-```json
-{"id":"...","mode":"...","messages":[{"role":"user","content":"..."}],
- "reference":"<câu trả lời chuẩn của sales senior>","persona":"P0x"}
-```
-
-For convenience the loader also accepts a `prompt`/`question`/`situation` field instead of
-`messages`, and a trailing assistant turn or a `response`/`answer` field as the `reference`
-(see `slm_coach.data.schema.GoldCase`). Validate the whole set the same way as the rest:
-`uv run python scripts/validate_data.py` validates the training splits; gold is validated when
-you run evaluation.
+`leading_root_cause` is the ground-truth label the evaluator scores against (RC accuracy + confusion).
+`eval_hard.jsonl` has the same shape with an empty `reference` (the label is the ground truth).

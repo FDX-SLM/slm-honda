@@ -17,6 +17,8 @@ from slm_coach.reporting.tables import (
     write_criteria_table,
     write_per_mode_table,
     write_per_sample_table,
+    write_run_facts,
+    write_training_summary,
     write_training_table,
 )
 from slm_coach.utils.logging import get_logger
@@ -37,6 +39,8 @@ __all__ = [
     "write_criteria_table",
     "write_per_mode_table",
     "write_per_sample_table",
+    "write_run_facts",
+    "write_training_summary",
     "write_training_table",
 ]
 
@@ -47,24 +51,33 @@ def export_training_artifacts(
     *,
     make_tables: bool = True,
     make_plots: bool = True,
+    facts: dict[str, Any] | None = None,
 ) -> dict[str, list[Path]]:
-    """Read a training run's log and write its metric table + curve charts.
+    """Read a training run's log and write its metric table + curve charts + run facts.
 
     Args:
         run_dir: Training output directory containing ``trainer_state.json``.
         out_dir: Where to write artifacts (defaults to ``<run_dir>/metrics``).
-        make_tables: Write ``training_log.csv``.
-        make_plots: Write loss/eval-metric/LR charts (needs the ``viz`` extra).
+        make_tables: Write ``training_log.csv`` + ``run_facts``/``training_summary``.
+        make_plots: Write loss/eval-metric/LR/grad-norm charts (needs the ``viz`` extra).
+        facts: Optional run facts (base model, method, precision, gradient_checkpointing, effective
+            batch, masking, data counts) written as ``run_facts.csv``/``.md`` for the report.
 
     Returns:
         Mapping ``{"tables": [...], "plots": [...]}`` of written paths.
     """
     out = Path(out_dir) if out_dir is not None else Path(run_dir) / "metrics"
+    tables: list[Path] = []
+    # Run facts do not need a trainer log — always write them when provided.
+    if make_tables and facts:
+        tables += write_run_facts(facts, out)
     rows = read_trainer_log(run_dir)
     if not rows:
         logger.warning("No training log to export", extra={"run_dir": str(run_dir)})
-        return {"tables": [], "plots": []}
-    tables: list[Path] = [write_training_table(rows, out)] if make_tables else []
+        return {"tables": tables, "plots": []}
+    if make_tables:
+        tables.append(write_training_table(rows, out))
+        tables.append(write_training_summary(rows, out))
     plots: list[Path] = plot_training_curves(rows, out) if make_plots else []
     logger.info(
         "Exported training artifacts",

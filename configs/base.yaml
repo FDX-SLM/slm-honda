@@ -1,7 +1,8 @@
 # Shared configuration: base model, paths, seed, tracking, data contract.
 # Other config files declare `defaults: base.yaml` and override the sections they need.
+# Honda Entitlement Resolver PoC (PoC6). Train one shared dataset onto 4 base models via --base.
 
-model_name: "Qwen/Qwen3.5-9B"   # base SLM (config-driven; swap freely, never downloaded in tests)
+model_name: "Qwen/Qwen3.5-9B"   # default base (override per run with --base qwen|gemma|phi|granite)
 output_dir: "checkpoints"
 report_dir: "outputs"
 seed: 42
@@ -12,9 +13,9 @@ tracking:
 data:
   dir: "data"
   keep_audit_status: ["approved"] # only train on approved records
-  lang: "vi"
-  holdout_dir: "data/holdout"     # train/val đã materialize (scripts/split_holdout.py); val không bao giờ được train
-  val_fraction: 0.10              # SFT: val ≥ 10% dữ liệu, CHIA ĐỀU 7 mode
-  val_min_total: 200              # ...và tối thiểu 200 record val
-  pref_val_fraction: 0.10         # DPO/preference: val ≥ 10%, chia đều mode
-  pref_val_min_total: 14          # ...tối thiểu 14 (≈2/mode); preference set nhỏ hơn SFT
+  lang: "en"                      # data + runbook + output are English (PoC §0)
+  holdout_dir: null               # null → use the in-memory sft.val_split; set to a dir after split_holdout.py
+  val_fraction: 0.10
+  val_min_total: 60
+  pref_val_fraction: 0.10
+  pref_val_min_total: 12

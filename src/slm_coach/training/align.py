@@ -238,8 +238,31 @@ def _run_align_core(
         try:
             from slm_coach.reporting import export_training_artifacts
 
+            prec = precision_kwargs()
+            facts = {
+                "run_name": config.run_name,
+                "stage": "alignment-dpo",
+                "base_model": config.model_name,
+                "sft_checkpoint": str(start),
+                "method": config.align.method,
+                "loss_type": config.align.loss_type,
+                "beta": config.align.beta,
+                "precision": "bf16" if prec.get("bf16") else ("fp16" if prec.get("fp16") else "fp32"),
+                "load_in_4bit": config.quant.load_in_4bit,
+                "epochs": config.align.epochs,
+                "learning_rate": config.align.lr,
+                "batch_size": config.batch_size,
+                "grad_accum": config.grad_accum,
+                "effective_batch": config.batch_size * config.grad_accum,
+                "max_length": config.align.max_length,
+                "gradient_checkpointing": config.train.gradient_checkpointing,
+                "seed": config.seed,
+                "n_pref_train": len(dataset),
+            }
             trainer.save_state()  # writes the cumulative trainer_state.json to output_dir
-            export_training_artifacts(output_dir, make_tables=rep.tables, make_plots=rep.plots)
+            export_training_artifacts(
+                output_dir, make_tables=rep.tables, make_plots=rep.plots, facts=facts
+            )
         except Exception as exc:  # noqa: BLE001 - artifacts must never fail a good run
             logger.warning("Could not export training metrics", extra={"error": str(exc)})
     tracker.close()

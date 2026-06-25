@@ -52,28 +52,28 @@ def test_load_per_sample_roundtrip(tmp_path):
         writer = csv.DictWriter(handle, fieldnames=["id", "mode", "prompt", "answer", "reference"])
         writer.writeheader()
         writer.writerow(
-            {"id": "c1", "mode": "comparison", "prompt": "p", "answer": "a", "reference": "r"}
+            {"id": "c1", "mode": "cache_stale", "prompt": "p", "answer": "a", "reference": "r"}
         )
     rows = load_per_sample(path)
-    assert rows["c1"]["answer"] == "a" and rows["c1"]["mode"] == "comparison"
+    assert rows["c1"]["answer"] == "a" and rows["c1"]["mode"] == "cache_stale"
 
 
 def test_head_to_head_mock_winrate():
     rows_a = {
-        "c1": {"mode": "comparison", "prompt": "p", "answer": "Dạ em xin tư vấn kỹ cho anh ạ"}
+        "c1": {"mode": "cache_stale", "prompt": "p", "answer": "Dạ em xin tư vấn kỹ cho anh ạ"}
     }
-    rows_b = {"c1": {"mode": "comparison", "prompt": "p", "answer": "ừ"}}
+    rows_b = {"c1": {"mode": "cache_stale", "prompt": "p", "answer": "ừ"}}
     result = head_to_head([MockJudge()], rows_a, rows_b)
     assert result["n"] == 1
     assert result["overall"]["win"] == 1.0  # A (longer + polite) beats B
     md = build_headtohead_markdown(result, label_a="SLM", label_b="parent")
-    assert "SLM" in md and "comparison" in md and "Headline" in md
+    assert "SLM" in md and "cache_stale" in md and "Headline" in md
 
 
 # --- gold dataset validity (synthetic file written into data/) --------------------------------
 
 
-def test_gold_dataset_valid_and_covers_all_modes():
+def test_gold_dataset_valid_and_covers_rc_slices():
     from slm_coach.data.loader import load_gold_cases
     from slm_coach.data.schema import Mode
 
@@ -82,6 +82,10 @@ def test_gold_dataset_valid_and_covers_all_modes():
         pytest.skip("gold_test.jsonl not present")
     cases = load_gold_cases(path)
     assert len(cases) >= 14
-    assert {c.mode for c in cases} == {m.value for m in Mode}  # all 7 conversation modes
-    assert all(c.reference.strip() for c in cases)  # every case has a gold reference
+    modes = {c.mode for c in cases}
+    # The eval gold covers the 3 root causes + abstention (knowledge/differential/distractor are
+    # SFT-only slices, not eval targets).
+    assert modes == {"tcu_offline", "cache_stale", "eligibility", "abstention"}
+    assert modes <= {m.value for m in Mode}
+    assert all(c.reference.strip() for c in cases)  # every eval case has a gold reference
     assert all(c.prompt and c.prompt[0]["role"] != "assistant" for c in cases)

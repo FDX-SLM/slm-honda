@@ -17,18 +17,26 @@ from slm_coach.config import (
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 
 
-def test_sft_coach_9b_config_merges_base():
-    cfg = load_sft_config(CONFIGS / "sft_coach_9b.yaml")
-    assert cfg.model_name == "Qwen/Qwen3.5-9B"
-    assert cfg.seed == 1308  # overridden in sft_coach_9b.yaml (base default is 42)
+def test_sft_config_merges_base():
+    cfg = load_sft_config(CONFIGS / "sft.yaml")
+    assert cfg.model_name == "Qwen/Qwen3.5-9B"  # default base (override with --base)
+    assert cfg.seed == 42
     assert cfg.data.dir == "data"  # from base.yaml
+    assert cfg.data.lang == "en"  # Honda data is English
     assert cfg.tracking.langfuse is True
-    assert cfg.run_name == "sft_coach_9b"
-    assert cfg.sft.epochs == 2
-    assert cfg.lora.r > 0  # tunable hyperparameter; just verify the lora section parsed
+    assert cfg.run_name == "sft"
+    assert cfg.sft.epochs == 3
+    assert cfg.lora.r > 0
     assert cfg.quant.load_in_4bit is True  # QLoRA
-    assert cfg.data.holdout_dir == "data/holdout"  # from base.yaml
-    assert cfg.data.val_min_total == 200
+    assert cfg.data.holdout_dir is None  # base.yaml default (in-memory val_split)
+    assert cfg.data.val_min_total == 60
+
+
+def test_dpo_config_parses():
+    dpo = load_align_config(CONFIGS / "dpo.yaml")
+    assert dpo.align.method == "dpo"
+    assert dpo.sft_checkpoint == "checkpoints/sft/best"
+    assert dpo.align.lr == 5.0e-6
 
 
 def test_smoke_config_parses():
@@ -49,10 +57,11 @@ def test_align_coach_dpo_config():
 
 def test_eval_config_values():
     cfg = load_eval_config(CONFIGS / "eval.yaml")
-    assert cfg.judges == ["gpt", "gemini"]
-    assert cfg.per_mode_breakdown is True
-    assert cfg.rubric_weights["factuality"] == 2.0
-    assert cfg.pairwise is True
+    assert cfg.gold == "data/gold/gold_test.jsonl"
+    assert cfg.seed == 999  # held-out eval seed
+    assert cfg.generation.max_new_tokens == 640
+    assert cfg.system_prompt is None  # falls back to ground_truth.SYSTEM_PROMPT
+    assert "claude" not in cfg.judges and "deepseek" not in cfg.judges
 
 
 def test_eval_config_rejects_teacher_judges():

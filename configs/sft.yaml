@@ -1,0 +1,61 @@
+# SFT (Phase 1) for the Honda Entitlement Resolver — QLoRA on the configured base.
+# Model-agnostic: keep this config fixed and switch the base with --base:
+#   uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen
+#   uv run python scripts/train_sft.py --config configs/sft.yaml --base gemma
+# Template is never hardcoded — each base renders via tokenizer.apply_chat_template.
+defaults: base.yaml
+
+run_name: "sft"
+seed: 42
+
+model_name: "Qwen/Qwen3.5-9B"   # overridden by --base
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: "all-linear"
+  bias: "none"
+
+quant:
+  load_in_4bit: true              # QLoRA (fits 14B on 1×96GB; flip to false for full bf16 LoRA)
+
+model:
+  max_seq_len: 2048               # complaint + <think> + JSON package fits in 2048
+  attn_implementation: "sdpa"     # SDPA everywhere; set flash_attention_2 only if installed
+  use_unsloth: false              # enable on Linux+CUDA if Unsloth supports the arch
+  dtype: "bfloat16"
+
+sft:
+  epochs: 3
+  lr: 2.0e-4                      # QLoRA range (full-FT would be 1e-5..2e-5)
+  batch_size: 8
+  eval_batch_size: 2
+  grad_accum: 2                   # effective batch = 16
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+  optim: "adamw_torch"
+  gradient_checkpointing: true
+  use_liger_kernel: false
+  max_seq_len: 2048
+  train_on_responses_only: true   # loss only on the assistant turn (incl. the <think> block)
+  multiturn_masking: true
+  packing: false
+  val_split: 0.05                 # held-out slice to watch overfit
+  save_steps: 50
+  eval_steps: 50
+  logging_steps: 5
+  save_total_limit: 2
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+  early_stopping_patience: 4
+
+eval_during_training:
+  enabled: true
+  gold_subset: "data/gold/gold_test.jsonl"
+  subset_size: 16
+  max_new_tokens: 512
+  use_judge: false                # fast proxy during training (no API); full oracle eval runs after

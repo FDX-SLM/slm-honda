@@ -1,140 +1,159 @@
-# SLM Sales Coach — fine-tuning & evaluation pipeline
+# Honda Entitlement Resolver — SLM fine-tuning & evaluation (PoC6)
 
-A complete, runnable pipeline that **fine-tunes and evaluates** a Small Language Model acting as
-an **iPhone sales coach in Vietnamese** (base model: `Qwen/Qwen3.5-9B`). The pipeline goes
-**data → train → evaluate → export** and **stops at producing the model**.
+Fine-tunes and evaluates a **closed-book diagnostic SLM** for Honda support/operations. Input is a
+**raw customer complaint** (no error code, no logs); the model reads the linguistic **cues**, infers
+the **root cause** (a calibrated differential, not a guess), and emits a full **resolution package**
+(`<think>` reasoning + a JSON diagnosis + runbook business fields + RCA/work-order/email/mermaid
+artifacts). It is trained on **100% synthetic data generated from ground truth** and **never invents
+telemetry**. Pipeline: **generate → train → evaluate → export**, and it **stops at producing the model**.
 
-- **In scope:** data loading/validation, training (T1 LoRA SFT, T2 multi-stage QLoRA SFT, T3
-  DPO/ORPO), evaluation (rubric + multi-judge + per-mode + pairwise), and export/quantization
-  (merge → FP16 → AWQ INT4 + GGUF Q4_K_M).
-- **Out of scope:** data *generation* (another team owns it), any serving / inference-runtime /
-  API layer, and there is **no Makefile** — the project is managed entirely with **`uv`**.
+> Authoritative spec: `PoC6_SLM_BUILD_SPEC.pdf`. Data/runbooks/output are **English**; code comments
+> and explanations may be Vietnamese.
 
-> The repo *consumes* data; it never creates it. See [data/README.md](data/README.md) for the
-> data contract.
+## Three root causes (differentiated by cue, §1.2)
+
+| RC | Runbook | Cue in the complaint |
+| --- | --- | --- |
+| `TCU_OFFLINE` | RB-TCU-04 | car parked underground/garage, "no signal", remote command times out, shows active but car doesn't respond |
+| `ENTITLEMENT_CACHE_STALE` | RB-CACHE-02 | active on web but not the app, worked-then-stopped, intermittent, re-login helps |
+| `ELIGIBILITY_RULE_CONFLICT` | RB-ELIG-05 | app keeps prompting Subscribe despite payment, region/trim/plan combo (e.g. CR-V Touring US-West) |
+| `INSUFFICIENT_EVIDENCE` (abstain) | — | no distinguishing cue, or out-of-catalog (403, billing, app crash, OTA) → route to a human |
+
+Everything factual (systems, runbooks, incidents, eligibility matrix) lives in
+[`src/slm_coach/ground_truth.py`](src/slm_coach/ground_truth.py); every generated sample is gated by
+the [graph oracle](src/slm_coach/oracle.py) (no fabricated telemetry, cue-grounded evidence, runbook
+fidelity, calibrated confidence).
 
 ---
 
 ## Install
 
-Everything runs through [`uv`](https://docs.astral.sh/uv/). The project targets **Python 3.12**
-(pinned in `.python-version`).
+Everything runs through [`uv`](https://docs.astral.sh/uv/) (Python 3.12, pinned in `.python-version`).
 
 ```bash
-# 1. Install uv (one time)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Create the venv + install the CPU core (no GPU needed)
-uv sync
-
-# 3. Run the tests (no GPU, no API keys)
-uv run pytest
+uv sync                 # CPU core — enough to generate data, validate, dry-run, run pytest
+uv run pytest           # no GPU / no API keys
 ```
 
-### Dependency extras (GPU / eval / export)
-
-To keep `uv sync` working on any machine, the heavy and platform-specific dependencies live in
-**optional extras** (a plain `uv sync` installs only the cross-platform core + dev tools, which
-is all the tests and dry-runs need). Install extras on the box that needs them:
-
-| Extra | Installs | Needed for |
-| --- | --- | --- |
-| `train` | torch, trl, peft, accelerate, bitsandbytes | actual training / merging (GPU) |
-| `gpu` | unsloth, flash-attn | Unsloth + FA2 speedups (**Linux + CUDA only**) |
-| `eval` | openai, google-genai, lm-eval | LLM judges, harness |
-| `export` | autoawq | AWQ INT4 quantization |
-| `tracking` | langfuse | qualitative sample-generation logging |
-| `viz` | matplotlib | PNG charts for loss/eval curves + per-mode bars (CSV tables need no extra) |
+On the **GPU training/eval box** (Linux + CUDA) add the heavy extras:
 
 ```bash
-# On the GPU training/eval box (Linux + CUDA):
-uv sync --extra train --extra gpu --extra eval --extra export --extra tracking --extra viz
+uv sync --extra train --extra gpu --extra export --extra viz --extra tracking
+cp .env.example .env    # optional: Langfuse keys. (Eval is oracle-based — no judge API keys needed.)
 ```
 
-GPU/optional modules import lazily and degrade safely: every CLI runs under `--dry-run` (and the
-evaluator under `--mock`) with **no GPU and no API keys**.
+GPU/optional modules import lazily and degrade safely: every training CLI has `--dry-run` and the
+evaluator has `--mock`, so the whole pipeline wires up with **no GPU and no keys**.
 
 ---
 
-## Run without a GPU
+## Run guide (step by step)
 
+### 0 — Environment
 ```bash
-# Unit tests (schema, formatting+masking, loader, mixture, per-mode metrics, offline phase logic)
-uv run pytest
-
-# Validate a data delivery against the contract
-uv run python scripts/validate_data.py --data-dir data/
-
-# Dry-run any training CLI: resolves config + builds the data/plan, no model load
-uv run python scripts/train_sft.py --config configs/sft_coach_9b.yaml --dry-run
-
-# Mock evaluation: canned generation + mock judge -> a real report, fully offline
-uv run python scripts/evaluate.py --config configs/eval.yaml --model any --mock
-
-# Local 8GB smoke test of the full T1 loop (small base model, ~200 steps) — needs the train extra
-uv run python scripts/train_sft.py --config configs/sft_lora_smoke.yaml
+uv sync --extra train --extra gpu --extra export --extra viz   # GPU box
+# or just `uv sync` to generate data / dry-run on CPU
 ```
 
+### 1 — Generate the data (from ground truth, gated by the oracle)
+```bash
+uv run python scripts/gen_sft.py  --seed 42  --out data/sft/train_sft.jsonl          # ~2.3k SFT (5 groups)
+uv run python scripts/gen_dpo.py  --seed 42  --out data/preference/dpo_pairs.jsonl   # ~600 DPO pairs (6 types)
+uv run python scripts/gen_eval.py --seed 999 --out data/gold/gold_test.jsonl         # 180 eval + 20 eval_hard (seed 999)
+uv run python scripts/validate_data.py --data-dir data/                              # schema check
+```
+Smoke (tiny, for a quick look): add `--limit 30`. Each gen script prints its per-slice distribution.
+
+### 2 — (optional) Stratified holdout
+```bash
+uv run python scripts/split_holdout.py --config configs/sft.yaml   # materializes data/holdout/{train,val}.jsonl
+```
+
+### 3 — Train SFT (model-agnostic — switch base with `--base`)
+```bash
+uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen      # → checkpoints/sft_qwen/best
+# also: --base gemma | phi | granite   (Qwen/Qwen3.5-9B · google/gemma-4-12b-it · microsoft/phi-4 · ibm-granite/granite-4.1-8b-instruct)
+```
+Training writes report artifacts under `checkpoints/sft_<base>/metrics/`: `run_facts.csv/.md`
+(base, method, precision, **gradient_checkpointing**, effective batch, masking, data counts),
+`training_log.csv`, `training_summary.md`, and charts `loss_curve.png` / `eval_metric.png` /
+`lr_schedule.png` / `grad_norm.png` (charts need the `viz` extra).
+
+### 4 — Evaluate SFT (oracle KPIs)
+```bash
+uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/sft_qwen/best \
+    --base qwen --run-name eval_sft_qwen
+uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/sft_qwen/best \
+    --base qwen --hard --run-name eval_hard_qwen   # 20 hand-written hard cases, reported separately
+```
+Report: `outputs/eval/<run>/report.{md,json}` + `per_sample.csv` — RC accuracy, confusion (3 RC +
+ABSTAIN), cue-grounding faithfulness, no-fabricated-telemetry, runbook completeness/fidelity,
+calibration (ECE), abstention hallucination, artifact valid@1, latency p50/p95.
+
+### 5 — DPO alignment (continues the SFT checkpoint)
+```bash
+uv run python scripts/train_align.py --config configs/dpo.yaml --base qwen \
+    --sft-checkpoint checkpoints/sft_qwen/best        # → checkpoints/dpo_qwen/best
+uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/dpo_qwen/best \
+    --base qwen --run-name eval_dpo_qwen
+```
+
+### 6 — Export (the deliverable)
+```bash
+uv run python scripts/export_model.py --checkpoint checkpoints/dpo_qwen/best --formats gguf,awq
+```
+
+### 7 — Compare the 4 base models → pick the winner
+```bash
+uv run python scripts/compare_models.py --eval-root outputs/eval --out outputs/eval/leaderboard.md
+```
+
+### 8 — Demo + RAG baseline (the money shot)
+```bash
+uv run python scripts/rag_baseline.py --gold data/gold/gold_test.jsonl   # cue-blind foil (lower accuracy, can't abstain)
+HONDA_ADAPTER=checkpoints/dpo_qwen/best uv run streamlit run app.py       # split-screen SLM vs RAG
+```
+The demo runs in **DEMO mode from ground truth** if no adapter/GPU is present, so it works offline for
+screenshots.
+
 ---
+
+## Train all 4 bases in one loop
+
+```bash
+for M in qwen gemma phi granite; do
+  uv run python scripts/train_sft.py   --config configs/sft.yaml --base $M
+  uv run python scripts/train_align.py --config configs/dpo.yaml --base $M --sft-checkpoint checkpoints/sft_$M/best
+  uv run python scripts/evaluate.py    --config configs/eval.yaml --model checkpoints/dpo_$M/best --base $M --run-name eval_dpo_$M
+done
+uv run python scripts/compare_models.py --eval-root outputs/eval
+```
 
 ## Project layout
 
 ```
-configs/        base.yaml + sft_coach_9b / sft_lora_smoke / align_coach_dpo / eval
 src/slm_coach/
-  config.py     pydantic models + base-merge loader (${ENV} expansion)
-  tracking.py   Langfuse facade for sample generations (no-op without the tracking extra)
-  reporting/    metric CSV tables + PNG charts (tables.py · plots.py); degrades without matplotlib
-  data/         schema · loader · formatting (ChatML, <think>, multi-turn masking) · mixture
-  training/     model (Unsloth/FA2, LoRA/QLoRA) · sft · align (DPO) · callbacks
-  eval/         inference · runner · rubric · judge (GPT+Gemini, pairwise) · latency · metrics · report · harness_task
-  export/       merge (LoRA→FP16) · quantize (AWQ INT4 + GGUF Q4_K_M)
-  utils/        logging · seed · deps
-scripts/        thin CLIs: validate_data · train_sft · train_align · evaluate · export_model · plot_metrics
-tests/          unit tests (no GPU / no API keys)
+  ground_truth.py   3 RC + 3 runbooks (§2.1) + render_runbook (§2.3) + cue library + eligibility matrix + incidents + system prompt
+  oracle.py         graph oracle (§4): cue-grounding · no-fabricated-telemetry · RC↔cue · runbook fidelity · calibration
+  model_registry.py the 4 base models → {hf_id, dtype, sampling, think_native, notes}
+  datagen/          core (complaint→<think>→resolution+artifacts) · sft (5 groups) · dpo (6 types) · evalset (eval + eval_hard)
+  data/             schema · loader · formatting (apply_chat_template, <think>, multi-turn masking) · split
+  training/         model (Unsloth/FA2, LoRA/QLoRA) · sft · align (DPO) · callbacks
+  eval/             honda (oracle KPIs + report) · inference (offline batch) · rag (baseline) · latency
+  export/           merge (LoRA→FP16) · quantize (AWQ INT4 + GGUF Q4_K_M)
+  reporting/        run_facts + training_log/summary + per-mode/eval tables · charts (loss/lr/grad_norm/per-mode)
+scripts/            gen_sft · gen_dpo · gen_eval · validate_data · split_holdout · train_sft · train_align
+                    evaluate · export_model · compare_models (leaderboard) · compare_pair (head-to-head) · rag_baseline
+app.py              Streamlit demo (split-screen SLM vs RAG)
 ```
 
 ## Conventions
 
-- **Config-driven:** every hyperparameter lives in `configs/*.yaml` (never hardcoded). A config
-  declares `defaults: base.yaml` and overrides sections; `${ENV}` values resolve from the
-  environment at load time.
-- **Secrets in `.env` only** (see `.env.example`); `data/`, `checkpoints/`, `outputs/` are
-  gitignored.
-- **The 7 conversation modes** (in `src/slm_coach/data/schema.py`): `purchase_intent`,
-  `comparison`, `objection_handling`, `upsell`, `after_sales`, `complex_query`, `edge_case`.
-  `mode` is metadata — it never enters the training sequence.
-- **Judges are GPT + Gemini only** — never Claude/DeepSeek (the teacher models that produced the
-  data), to avoid circular / self-preference bias. Enforced in config validation.
+- **Config-driven:** every hyperparameter lives in `configs/*.yaml`. Switch the base model with
+  `--base` (registry) — data and chat template are never hardcoded (`tokenizer.apply_chat_template`).
+- **Honesty:** the model reasons only from cues in the complaint; the oracle rejects any sample that
+  invents telemetry or an ungrounded cue. Confidence ≤ 0.85 from a raw complaint; abstention ≤ 0.45.
+- **Secrets in `.env` only.** `data/`, `checkpoints/`, `outputs/` are gitignored.
 
----
-
-## Documentation
-
-The README stays high-level on purpose. The detailed guides live in [`docs/`](docs/):
-
-| Doc | What it covers |
-| --- | --- |
-| **[docs/RUNBOOK.md](docs/RUNBOOK.md)** | The whole pipeline end to end — every command, what it consumes/produces, and *why* the steps run in this order. **Start here to run anything.** |
-| **[docs/EVAL_COMPARISON.md](docs/EVAL_COMPARISON.md)** | Comparing several models (LoRA / QLoRA / base / teacher) — judge keys (and what to do with none), eval-per-model, leaderboard + head-to-head. |
-| **[docs/METRICS.md](docs/METRICS.md)** | How to read every metric file (which column means what, `score_5` vs `score_10`, where to look to spot overfit). |
-| **[docs/SPEC.md](docs/SPEC.md)** | The full design spec (authoritative on conflicts). |
-| **[data/README.md](data/README.md)** | The data contract — the exact JSONL shapes the data team delivers. |
-
-## Run guide (happy path)
-
-> Full detail in **[docs/RUNBOOK.md](docs/RUNBOOK.md)**. Add `--dry-run` to any training CLI (or
-> `--mock` to `evaluate.py`) to exercise the wiring with no GPU / no API keys.
-
-| # | Step | Command |
-| --- | --- | --- |
-| 0 | Setup | `uv sync --extra train --extra eval --extra viz --extra tracking` · `cp .env.example .env` |
-| 1 | Validate data | `uv run python scripts/validate_data.py --data-dir data/` |
-| 2 | SFT (the real model) | `uv run python scripts/train_sft.py --config configs/sft_coach_9b.yaml` |
-| 3 | Eval SFT | `uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/sft_coach_9b/best --run-name eval_sft` |
-| 4 | DPO alignment | `uv run python scripts/train_align.py --config configs/align_coach_dpo.yaml --sft-checkpoint checkpoints/sft_coach_9b/best` |
-| 5 | Eval aligned | `uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/align_coach_dpo/best --run-name eval_dpo` |
-| 6 | Export | `uv run python scripts/export_model.py --checkpoint checkpoints/align_coach_dpo/best --formats awq,gguf` |
-
-A fast local smoke of the full loop (small base model, no real data needed):
-`uv run python scripts/train_sft.py --config configs/sft_lora_smoke.yaml`.
+See [docs/RUNBOOK.md](docs/RUNBOOK.md) for the end-to-end pipeline detail and
+[data/README.md](data/README.md) for the data contract.

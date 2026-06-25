@@ -114,6 +114,16 @@ def plot_training_curves(rows: Sequence[dict[str, Any]], out_dir: str | Path) ->
         ax.grid(True, alpha=0.3)
         written.append(_save(fig, out / "lr_schedule.png", plt))
 
+    grad_x, grad_y = _series(rows, "grad_norm")
+    if grad_y:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(grad_x, grad_y, color="tab:red", linewidth=1.0)
+        ax.set_xlabel("step")
+        ax.set_ylabel("gradient norm")
+        ax.set_title("Gradient norm during training")
+        ax.grid(True, alpha=0.3)
+        written.append(_save(fig, out / "grad_norm.png", plt))
+
     return written
 
 

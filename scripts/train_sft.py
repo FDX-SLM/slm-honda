@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 
 from slm_coach.config import load_sft_config
+from slm_coach.model_registry import apply_to_config
 from slm_coach.training.sft import run_sft_training
 from slm_coach.utils.logging import configure_logging, get_logger
 from slm_coach.utils.runtime import bootstrap
@@ -26,6 +27,9 @@ logger = get_logger(__name__)
 @app.command()
 def main(
     config: Path = typer.Option(..., "--config", help="Path to the SFT config YAML."),
+    base: str = typer.Option(
+        None, "--base", help="Override base model via the registry (alias or HF id); model-agnostic."
+    ),
     resume: Path | None = typer.Option(None, "--resume", help="Checkpoint dir to resume from."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Resolve config + plan only (no GPU)."),
     json_logs: bool = typer.Option(False, "--json-logs", help="Emit JSON-structured logs."),
@@ -34,6 +38,11 @@ def main(
     bootstrap()
     configure_logging(json_logs=json_logs)
     cfg = load_sft_config(config)
+    if base:
+        spec = apply_to_config(cfg, base)
+        # Keep per-model runs from overwriting each other's checkpoints/reports.
+        cfg.run_name = f"{cfg.run_name}_{spec.key}"
+        logger.info("Base model overridden", extra={"base": spec.hf_id, "notes": spec.notes})
     set_seed(cfg.seed)
     logger.info("Starting SFT", extra={"run_name": cfg.run_name, "model": cfg.model_name})
     if dry_run:

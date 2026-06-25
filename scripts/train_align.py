@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 
 from slm_coach.config import load_align_config
+from slm_coach.model_registry import apply_to_config
 from slm_coach.training.align import run_alignment
 from slm_coach.utils.logging import configure_logging, get_logger
 from slm_coach.utils.runtime import bootstrap
@@ -25,6 +26,9 @@ logger = get_logger(__name__)
 @app.command()
 def main(
     config: Path = typer.Option(..., "--config", help="Path to the alignment config YAML."),
+    base: str = typer.Option(
+        None, "--base", help="Override base model via the registry (must match the SFT base)."
+    ),
     sft_checkpoint: Path | None = typer.Option(
         None, "--sft-checkpoint", help="SFT start checkpoint (required for DPO)."
     ),
@@ -36,6 +40,10 @@ def main(
     bootstrap()
     configure_logging(json_logs=json_logs)
     cfg = load_align_config(config)
+    if base:
+        spec = apply_to_config(cfg, base)
+        cfg.run_name = f"{cfg.run_name}_{spec.key}"
+        logger.info("Base model overridden", extra={"base": spec.hf_id})
     set_seed(cfg.seed)
     start = sft_checkpoint or (Path(cfg.sft_checkpoint) if cfg.sft_checkpoint else None)
     logger.info(

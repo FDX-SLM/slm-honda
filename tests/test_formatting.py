@@ -22,7 +22,7 @@ def _multi_turn_sft() -> object:
             "id": "s1",
             "data_type": "sft",
             "conversation_type": "multi_turn",
-            "mode": "comparison",
+            "mode": "cache_stale",
             "persona": "P01",
             "messages": [
                 {"role": "system", "content": "SYS"},
@@ -43,7 +43,7 @@ def _reasoning() -> object:
         {
             "id": "r1",
             "data_type": "reasoning",
-            "mode": "objection_handling",
+            "mode": "differential",
             "persona": "P02",
             "situation": "Khách chê đắt.",
             "reasoning": ["step-A", "step-B"],
@@ -106,7 +106,7 @@ def test_to_preference_dataset():
         {
             "id": "p1",
             "data_type": "preference",
-            "mode": "purchase_intent",
+            "mode": "tcu_offline",
             "persona": "P03",
             "prompt": [{"role": "user", "content": "Giảm giá không?"}],
             "chosen": [{"role": "assistant", "content": "Ưu đãi trả góp 0%."}],

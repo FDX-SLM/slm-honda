@@ -122,7 +122,8 @@ def test_export_training_artifacts_writes_table(tmp_path):
     )
     result = export_training_artifacts(tmp_path)
     assert (tmp_path / "metrics" / "training_log.csv").exists()
-    assert len(result["tables"]) == 1
+    assert (tmp_path / "metrics" / "training_summary.md").exists()
+    assert len(result["tables"]) == 2  # training_log.csv + training_summary.md
     # plots: either rendered (if matplotlib present) or gracefully skipped — never an error.
     assert isinstance(result["plots"], list)
     assert all(p.exists() for p in result["plots"])
