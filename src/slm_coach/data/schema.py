@@ -39,19 +39,20 @@ class Role(str, Enum):
 
 
 class Mode(str, Enum):
-    """The canonical 7 conversation modes for this project (see docs/SPEC.md §3).
+    """Honda Entitlement Resolver slice tags (PoC6) — metadata only.
 
-    Metadata only — never fed into the training sequence. These exact string values
-    match the data the data team produces and the distillation prompt library.
+    ``mode`` là **slice tag** để per-slice eval + holdout stratification; nó KHÔNG bao giờ vào
+    tokenized sequence (enforced in :mod:`slm_coach.data.formatting`). Bốn tag đầu là root-cause /
+    abstention (cho gold + complaint→resolution); ba tag sau gắn nhóm SFT (§5).
     """
 
-    purchase_intent = "purchase_intent"  # khách có ý định mua, cần dẫn tới quyết định
-    comparison = "comparison"  # so sánh model/cấu hình
-    objection_handling = "objection_handling"  # xử lý phản đối (giá, lo ngại, do dự)
-    upsell = "upsell"  # gợi ý nâng cấp/phụ kiện
-    after_sales = "after_sales"  # bảo hành, đổi trả, hỗ trợ sau mua
-    complex_query = "complex_query"  # câu hỏi kỹ thuật phức tạp
-    edge_case = "edge_case"  # tình huống biên (thô lỗ, mơ hồ, thao túng)
+    tcu_offline = "tcu_offline"  # RC-4 TCU offline
+    cache_stale = "cache_stale"  # RC-2 entitlement cache stale
+    eligibility = "eligibility"  # RC-5 eligibility rule conflict
+    abstention = "abstention"  # INSUFFICIENT_EVIDENCE (ambiguous / out-of-catalog)
+    knowledge = "knowledge"  # runbook-field Q&A augmentation (§5.2)
+    differential = "differential"  # differential reasoning traces (§5.3)
+    distractor = "distractor"  # same-surface different-cue distractors (§5.4)
 
 
 class DataType(str, Enum):
@@ -94,7 +95,7 @@ class _CommonMeta(BaseModel):
     mode: Mode
     persona: str = Field(min_length=1)
     source: str | None = None
-    lang: str = "vi"
+    lang: str = "en"
     version: str = Field(min_length=1)
     audit_status: str = Field(min_length=1)
 

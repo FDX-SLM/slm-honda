@@ -1,3 +1,9 @@
+> ⚠️ **DEPRECATED — historical only.** This repo now implements the **Honda Entitlement Resolver**
+> (PoC6). The authoritative spec is **`PoC6_SLM_BUILD_SPEC.pdf`**; the run guide is [README.md](../README.md)
+> and [RUNBOOK.md](RUNBOOK.md). The sales-coach text below is kept for engine-design reference only
+> (config/training/eval/export plumbing is reused) — its domain, data-contract, and eval rubric no
+> longer apply.
+
 # Repo Specification: Fine-tuning & Evaluation Pipeline — SLM Sales Coach (iPhone)
 
 > **This file is a brief for Claude Code.** Read it fully before generating any code. Your task: scaffold a complete, professional, runnable Python repository for **fine-tuning** and **evaluating** a Small Language Model (SLM) that acts as an iPhone sales advisor in Vietnamese. **Do NOT generate the data-creation parts** (another team owns those). The pipeline stops at **producing the model** (train → evaluate → export/quantize). There is **no serving/inference-runtime layer** in scope. The project is managed with **`uv`** (no Makefile). When finished, **print the step-by-step run guide (Section 11) at the end of the README**.

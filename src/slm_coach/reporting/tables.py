@@ -183,6 +183,64 @@ def write_training_table(
     return path
 
 
+def write_run_facts(
+    facts: Mapping[str, Any], out_dir: str | Path, *, filename: str = "run_facts"
+) -> list[Path]:
+    """Write the training run-facts table (config knobs for the report).
+
+    Records the things a training report should state plainly — base model, method (full/LoRA/
+    QLoRA), precision, gradient checkpointing, effective batch, scheduler, masking, data counts —
+    as both ``run_facts.csv`` (key,value) and ``run_facts.md`` (a readable two-column table).
+
+    Args:
+        facts: Flat mapping of fact name → value.
+        out_dir: Directory to write into.
+        filename: Base file name (``.csv`` and ``.md`` are appended).
+
+    Returns:
+        The written file paths.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    csv_path = out / f"{filename}.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["fact", "value"])
+        for key, value in facts.items():
+            writer.writerow([key, value])
+    md_path = out / f"{filename}.md"
+    lines = ["# Training run facts", "", "| Fact | Value |", "| --- | --- |"]
+    lines += [f"| {k} | {v} |" for k, v in facts.items()]
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Wrote run facts", extra={"csv": str(csv_path)})
+    return [csv_path, md_path]
+
+
+def write_training_summary(
+    rows: Sequence[dict[str, Any]], out_dir: str | Path, *, filename: str = "training_summary.md"
+) -> Path:
+    """Write a short end-of-run summary (final/best loss, eval, steps) for the report."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    losses = [r["loss"] for r in rows if "loss" in r]
+    eval_losses = [r["eval_loss"] for r in rows if "eval_loss" in r]
+    rubric = [r["eval_rubric_avg"] for r in rows if "eval_rubric_avg" in r]
+    steps = [r["step"] for r in rows if "step" in r]
+    lines = ["# Training summary", ""]
+    if steps:
+        lines.append(f"- Steps logged: {len(rows)} (max step {max(steps)})")
+    if losses:
+        lines.append(f"- Train loss: first {losses[0]:.4f} → last {losses[-1]:.4f}")
+    if eval_losses:
+        lines.append(f"- Eval loss: best {min(eval_losses):.4f} (last {eval_losses[-1]:.4f})")
+    if rubric:
+        lines.append(f"- Eval rubric/oracle metric: best {max(rubric):.4f}")
+    path = out / filename
+    path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Wrote training summary", extra={"path": str(path)})
+    return path
+
+
 def write_per_mode_table(
     breakdown: ModeBreakdown, out_dir: str | Path, *, filename: str = "per_mode.csv"
 ) -> Path:

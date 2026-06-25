@@ -12,7 +12,7 @@ def _sft(rec_id: str, audit: str) -> dict:
         "id": rec_id,
         "data_type": "sft",
         "conversation_type": "single",
-        "mode": "comparison",
+        "mode": "cache_stale",
         "persona": "P01",
         "messages": [
             {"role": "user", "content": "iPhone nào tốt?"},
@@ -68,4 +68,4 @@ def test_validate_data_dir(tmp_path):
     stats = validate_data_dir(tmp_path, data_types=["sft"])
     assert stats["sft"].valid == 3
     assert stats["sft"].invalid == 1
-    assert stats["sft"].by_mode["comparison"] == 3
+    assert stats["sft"].by_mode["cache_stale"] == 3

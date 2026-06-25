@@ -21,7 +21,7 @@ def _sft(**over) -> dict:
         "id": "s1",
         "data_type": "sft",
         "conversation_type": "multi_turn",
-        "mode": "comparison",
+        "mode": "cache_stale",
         "persona": "P01",
         "messages": [
             {"role": "system", "content": "Bạn là trợ lý bán hàng."},
@@ -42,7 +42,7 @@ def _reasoning(**over) -> dict:
     base = {
         "id": "r1",
         "data_type": "reasoning",
-        "mode": "objection_handling",
+        "mode": "differential",
         "persona": "P02",
         "situation": "Khách chê đắt.",
         "reasoning": ["Xác định ngân sách", "Nhấn mạnh giá trị"],
@@ -60,7 +60,7 @@ def _preference(**over) -> dict:
     base = {
         "id": "p1",
         "data_type": "preference",
-        "mode": "purchase_intent",
+        "mode": "tcu_offline",
         "persona": "P03",
         "bad_type": "pushy",
         "prompt": [{"role": "user", "content": "Có giảm giá không?"}],
@@ -77,7 +77,7 @@ def _preference(**over) -> dict:
 def test_parse_sft_record():
     rec = parse_record(_sft())
     assert isinstance(rec, SFTRecord)
-    assert rec.mode == "comparison"
+    assert rec.mode == "cache_stale"
     assert rec.data_type == "sft"
     assert rec.num_assistant_turns == 2
 
@@ -161,5 +161,5 @@ def test_validate_file_collects_stats(tmp_path):
     assert stats.invalid == 2
     assert stats.by_data_type["sft"] == 1
     assert stats.by_data_type["reasoning"] == 1
-    assert stats.by_mode["comparison"] == 1
+    assert stats.by_mode["cache_stale"] == 1
     assert len(stats.errors) == 2

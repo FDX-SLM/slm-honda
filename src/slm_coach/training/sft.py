@@ -276,13 +276,75 @@ def run_sft_core(
     write_meta_json(
         last_dir, config=config.model_dump(), seed=config.seed, data_version=config.data.lang
     )
-    _export_metrics(trainer, config, output_dir)
+    facts = build_training_facts(
+        config,
+        n_train=len(dataset),
+        n_val=len(eval_dataset),
+        assistant_only=assistant_only,
+        stage_name=stage_name,
+    )
+    _export_metrics(trainer, config, output_dir, facts=facts)
     tracker.close()
     logger.info("SFT pass complete", extra={"best": str(best_dir), "stage": stage_name})
     return best_dir
 
 
-def _export_metrics(trainer: Any, config: SFTFileConfig, output_dir: Path) -> None:
+def build_training_facts(
+    config: SFTFileConfig,
+    *,
+    n_train: int,
+    n_val: int,
+    assistant_only: bool,
+    stage_name: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the run-facts dict for the report (the knobs a report should state plainly)."""
+    sft = config.sft
+    prec = precision_kwargs()
+    precision = "bf16" if prec.get("bf16") else ("fp16" if prec.get("fp16") else "fp32")
+    method = "QLoRA-4bit" if config.quant.load_in_4bit else "LoRA"
+    return {
+        "run_name": config.run_name,
+        "stage": stage_name or "single",
+        "base_model": config.model_name,
+        "method": method,
+        "precision": precision,
+        "dtype": config.model.dtype,
+        "lora_r": config.lora.r,
+        "lora_alpha": config.lora.alpha,
+        "lora_dropout": config.lora.dropout,
+        "lora_target_modules": config.lora.target_modules,
+        "load_in_4bit": config.quant.load_in_4bit,
+        "epochs": sft.epochs,
+        "max_steps": sft.max_steps,
+        "learning_rate": sft.lr,
+        "lr_scheduler": sft.lr_scheduler_type,
+        "warmup_ratio": sft.warmup_ratio,
+        "weight_decay": sft.weight_decay,
+        "max_grad_norm": sft.max_grad_norm,
+        "optimizer": sft.optim,
+        "batch_size": sft.batch_size,
+        "grad_accum": sft.grad_accum,
+        "effective_batch": sft.batch_size * sft.grad_accum,
+        "max_seq_len": sft.max_seq_len,
+        "gradient_checkpointing": sft.gradient_checkpointing,
+        "use_liger_kernel": sft.use_liger_kernel,
+        "packing": sft.packing,
+        "multiturn_masking_config": sft.multiturn_masking,
+        "assistant_only_loss_effective": assistant_only,
+        "save_steps": sft.save_steps,
+        "eval_steps": sft.eval_steps,
+        "save_total_limit": sft.save_total_limit,
+        "metric_for_best_model": sft.metric_for_best_model,
+        "early_stopping_patience": sft.early_stopping_patience,
+        "seed": config.seed,
+        "n_train": n_train,
+        "n_val": n_val,
+    }
+
+
+def _export_metrics(
+    trainer: Any, config: SFTFileConfig, output_dir: Path, *, facts: dict[str, Any] | None = None
+) -> None:
     """Persist trainer state and write the metric tables + curve charts (never blocks a run)."""
     rep = config.reporting
     if not (rep.tables or rep.plots):
@@ -291,7 +353,9 @@ def _export_metrics(trainer: Any, config: SFTFileConfig, output_dir: Path) -> No
         from slm_coach.reporting import export_training_artifacts
 
         trainer.save_state()  # writes the cumulative trainer_state.json to output_dir
-        export_training_artifacts(output_dir, make_tables=rep.tables, make_plots=rep.plots)
+        export_training_artifacts(
+            output_dir, make_tables=rep.tables, make_plots=rep.plots, facts=facts
+        )
     except Exception as exc:  # noqa: BLE001 - artifact generation must never fail a good run
         logger.warning("Could not export training metrics", extra={"error": str(exc)})
 

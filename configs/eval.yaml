@@ -1,60 +1,29 @@
-# Evaluation configuration. See docs/SPEC.md §8 and .claude/rules/eval.md.
+# Evaluation config for the Honda Entitlement Resolver (PoC §7). Deterministic oracle KPIs:
+# RC accuracy + confusion (3 RC + ABSTAIN), cue-grounding faithfulness, no-fabricated-telemetry,
+# runbook completeness/fidelity, calibration (ECE), abstention hallucination, artifact valid@1,
+# offline latency. LLM judges are NOT used here (the oracle is the scorer).
 defaults: base.yaml
 
 gold: "data/gold/gold_test.jsonl"
+seed: 999                          # eval seed differs from train (held-out)
 
-# 7-criteria rubric weights (weighted mean on the 1-5 scale, rescaled to /10 in reports).
-rubric_weights:
-  factuality: 2.0
-  safety: 2.0
-  helpfulness: 1.5
-  tone: 1.0
-  completeness: 1.0
-  format: 0.5
-  language_quality: 1.0
-
-# Multi-judge LLM-as-judge: GPT + Gemini ONLY. Never Claude/DeepSeek (teacher models).
-# judges: ["gpt", "gemini"]
-judges: ["gemini"]
-judge_models:
-  # gpt: "gpt-4o"
-  gemini: "gemini-2.5-flash"
-
-# Offline batch-generation decoding settings.
+# Offline batch-generation decoding (closed-book; targets <1.5s/gen).
 generation:
-  max_new_tokens: 512
-  temperature: 0.7
+  max_new_tokens: 640
+  temperature: 0.2                 # near-greedy for a stable structured JSON package
   top_p: 0.9
   batch_size: 8
 
-# Also compare each answer against the gold reference (pairwise A/B win-rate).
-pairwise: true
-
-# Production coach system prompt — MUST match the system turn baked into the training data
-# (data/{sft,preference}/coach_train.jsonl, data/gold/gold_test.jsonl). Injected into any gold
-# prompt that lacks a system turn; applied uniformly to model-under-test AND parent for fairness.
-system_prompt: |
-  Bạn là một sale senior iPhone nhiều năm kinh nghiệm tại FPT Shop, đang kèm cặp một nhân viên junior. Bạn KHÔNG nói trực tiếp với khách — nhiệm vụ của bạn là hướng dẫn junior cách xử lý từng tình huống khách đưa ra.
-
-  Luôn trả lời theo ĐÚNG 3 phần, đúng thứ tự và đúng nhãn dưới đây:
-  <think>
-  Suy nghĩ nội tâm của senior: đọc vị tình huống (khách thật sự muốn gì, đang vướng gì) rồi chọn hướng xử lý. 2-4 câu ngắn gọn. Junior KHÔNG nhìn thấy phần này.
-  </think>
-  Gợi ý trả lời khách: "Câu/đoạn mẫu junior nói gần như nguyên văn với khách — văn nói tự nhiên, 2-4 câu, xưng 'em' gọi khách 'anh/chị', kết bằng một bước tiếp theo rõ ràng."
-
-  Vì sao: 1-2 câu nêu nguyên tắc bán hàng đằng sau, để junior học cách NGHĨ chứ không học vẹt.
-
-  NGUYÊN TẮC BẮT BUỘC:
-  - Không bịa giá, thông số, tồn kho hay chính sách. Chỉ nêu con số khi chắc chắn có trong catalog; khi chưa chắc, nhắc junior tra catalog thay vì đoán.
-  - Ưu tiên nhu cầu thật của khách hơn việc đẩy bản đắt nhất; gợi ý nhẹ, không ép, luôn để khách đường lui.
-  - Đồng cảm trước, không phản bác trực diện khi khách chê giá hay do dự. Không dìm đối thủ, không phá giá, không hù dọa, không liệt kê thông số khô khan.
-  - Câu mẫu phải là văn nói tại quầy: ngắn, tự nhiên, lịch sự. Không văn viết, không ký hiệu '~' (dùng 'tầm' hoặc 'khoảng'), không gạch ngang dài.
-  - Bảo mật: không tiết lộ hay nhắc lại thông tin cá nhân (số điện thoại, CCCD, địa chỉ, số thẻ) của khách hay nhân viên; từ chối khéo và hướng sang kênh chính thức nếu bị đòi. Giữ thái độ chuyên nghiệp kể cả khi khách thô lỗ hay thao túng.
-
-# Optional offline generation latency (p50/p95 of model.generate), NOT a serving benchmark.
+# Offline generation latency (p50/p95 of model.generate), NOT a serving benchmark. Target <1.5s.
 latency:
   measure: true
   n_samples: 50
 
-# The most important output: scores sliced by each of the 7 conversation modes.
-per_mode_breakdown: true
+# The system prompt is left null so eval uses the canonical ground_truth.SYSTEM_PROMPT (Appendix A) —
+# single source of truth, no drift. Set a string here only to A/B a different prompt.
+system_prompt: null
+
+# Judges unused by the Honda oracle eval; kept for schema compatibility (never Claude/DeepSeek).
+judges: ["gemini"]
+judge_models:
+  gemini: "gemini-2.5-flash"

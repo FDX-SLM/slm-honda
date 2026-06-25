@@ -1,0 +1,60 @@
+# DPO (Phase 2) for the Honda Entitlement Resolver. ~600 preference pairs → DPO (not ORPO).
+# REQUIRES an SFT checkpoint as the starting point (--sft-checkpoint). Same base as SFT (--base).
+#   uv run python scripts/train_align.py --config configs/dpo.yaml --base qwen \
+#       --sft-checkpoint checkpoints/sft_qwen/best
+defaults: base.yaml
+
+run_name: "dpo"
+seed: 42
+
+model_name: "Qwen/Qwen3.5-9B"   # overridden by --base; MUST match the SFT base
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: "all-linear"
+  bias: "none"
+
+quant:
+  load_in_4bit: true
+
+model:
+  max_seq_len: 1024
+  attn_implementation: "sdpa"
+  use_unsloth: false
+  dtype: "bfloat16"
+
+align:
+  method: "dpo"
+  beta: 0.1
+  lr: 5.0e-6                      # low LR for DPO stability
+  epochs: 2
+  max_length: 1536               # system + complaint + <think> + JSON
+  max_prompt_length: 1024
+  loss_type: "sigmoid"
+  label_smoothing: 0.0
+  rpo_alpha: null
+
+batch_size: 1
+grad_accum: 8
+
+train:
+  save_steps: 20
+  eval_steps: 20
+  logging_steps: 5
+  save_total_limit: 2
+  load_best_model_at_end: true
+  metric_for_best_model: "loss"
+  greater_is_better: false
+  early_stopping_patience: 3
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+  optim: "adamw_torch"
+  gradient_checkpointing: true
+  use_liger_kernel: false
+  max_seq_len: 1536
+
+sft_checkpoint: "checkpoints/sft/best"   # override with --sft-checkpoint

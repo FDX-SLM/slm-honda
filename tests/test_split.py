@@ -7,13 +7,13 @@ import pytest
 from slm_coach.data.split import stratified_holdout
 
 MODES = [
-    "purchase_intent",
-    "comparison",
-    "objection_handling",
-    "upsell",
-    "complex_query",
-    "after_sales",
-    "edge_case",
+    "tcu_offline",
+    "cache_stale",
+    "differential",
+    "eligibility",
+    "knowledge",
+    "abstention",
+    "distractor",
 ]
 
 

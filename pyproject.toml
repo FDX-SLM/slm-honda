@@ -1,11 +1,11 @@
 [project]
-name = "slm-sales-coach"
+name = "slm-honda-resolver"
 version = "0.1.0"
-description = "Fine-tuning & evaluation pipeline for a Vietnamese iPhone sales-coach SLM (Qwen3.5-9B)."
+description = "Generate, fine-tune & evaluate a closed-book Honda Entitlement Resolver SLM (PoC6, multi-model)."
 requires-python = ">=3.11,<3.13"
 license = { text = "Proprietary" }
-authors = [{ name = "SLM Sales Coach Team" }]
-keywords = ["llm", "fine-tuning", "qlora", "evaluation", "vietnamese", "sales-coach"]
+authors = [{ name = "FDX SLM Team" }]
+keywords = ["llm", "fine-tuning", "qlora", "dpo", "evaluation", "closed-book", "diagnosis", "honda"]
 
 # Core dependencies: cross-platform, torch-free, installable on CPU/Windows.
 # Everything Phase-1 (config + data + utils + metrics) needs lives here, so a plain
