@@ -29,6 +29,10 @@ dependencies = [
 # --- GPU training stack. CPU-installable for dry-run; real speed needs CUDA. ---
 train = [
     "torch>=2.3",
+    # torchvision MUST match torch's CUDA build, else transformers' image_utils import crashes
+    # ("PyTorch and torchvision compiled with different CUDA major versions"). Pinned to the same
+    # cu128 index as torch below. transformers/unsloth import it even for text-only work.
+    "torchvision>=0.20",
     "trl>=0.11",
     "peft>=0.12",
     "accelerate>=0.33",
@@ -87,6 +91,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]   # keep torchvision's CUDA matching torch (cu128)
 
 [build-system]
 requires = ["hatchling"]
