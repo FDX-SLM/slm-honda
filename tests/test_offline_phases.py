@@ -188,8 +188,8 @@ def test_load_calibration_texts(tmp_path):
 
 def test_write_report(tmp_path):
     samples = [
-        SampleScore("a", "comparison", dict.fromkeys(CRITERIA, 4.0)),
-        SampleScore("b", "objection_handling", dict.fromkeys(CRITERIA, 2.0)),
+        SampleScore("a", "cache_stale", dict.fromkeys(CRITERIA, 4.0)),
+        SampleScore("b", "tcu_offline", dict.fromkeys(CRITERIA, 2.0)),
     ]
     breakdown = aggregate_by_mode(samples, DEFAULT_WEIGHTS)
     md, js = write_report(
@@ -204,10 +204,10 @@ def test_write_report(tmp_path):
     assert md.exists() and js.exists()
     text = md.read_text(encoding="utf-8")
     assert "Per-mode breakdown" in text
-    assert "objection_handling" in text
+    assert "tcu_offline" in text
     assert "Pairwise vs reference" in text
     payload = json.loads(js.read_text(encoding="utf-8"))
-    assert set(payload["per_mode"]) == {"comparison", "objection_handling"}
+    assert set(payload["per_mode"]) == {"cache_stale", "tcu_offline"}
     assert "pii_leak_rate" not in payload  # PII removed
 
 
@@ -218,7 +218,7 @@ def test_gold_case_normalization():
     gc = parse_gold_case(
         {
             "id": "g1",
-            "mode": "comparison",
+            "mode": "cache_stale",
             "messages": [
                 {"role": "user", "content": "Q"},
                 {"role": "assistant", "content": "A"},
@@ -227,10 +227,10 @@ def test_gold_case_normalization():
     )
     assert gc.prompt == [{"role": "user", "content": "Q"}]
     assert gc.reference == "A"
-    assert gc.mode == "comparison"
+    assert gc.mode == "cache_stale"
 
     gc2 = parse_gold_case(
-        {"id": "g2", "mode": "upsell", "prompt": "Hỏi gì đó", "response": "Trả lời"}
+        {"id": "g2", "mode": "eligibility", "prompt": "Hỏi gì đó", "response": "Trả lời"}
     )
     assert gc2.prompt == [{"role": "user", "content": "Hỏi gì đó"}]
     assert gc2.reference == "Trả lời"
@@ -242,7 +242,7 @@ def test_gold_multi_turn_keeps_intermediate_assistant_context():
     gc = parse_gold_case(
         {
             "id": "g3",
-            "mode": "comparison",
+            "mode": "cache_stale",
             "messages": [
                 {"role": "system", "content": "sys"},
                 {"role": "user", "content": "16 hay 16 Pro?"},
@@ -264,7 +264,7 @@ def test_run_evaluation_mock_end_to_end(tmp_path):
     cases = [
         {
             "id": "c1",
-            "mode": "comparison",
+            "mode": "cache_stale",
             "messages": [
                 {"role": "user", "content": "iPhone 15 vs 14?"},
                 {"role": "assistant", "content": "15 có USB-C"},
@@ -272,7 +272,7 @@ def test_run_evaluation_mock_end_to_end(tmp_path):
         },
         {
             "id": "c2",
-            "mode": "objection_handling",
+            "mode": "tcu_offline",
             "messages": [
                 {"role": "user", "content": "Đắt quá"},
                 {"role": "assistant", "content": "Dạ mình xem trả góp ạ"},
@@ -292,6 +292,6 @@ def test_run_evaluation_mock_end_to_end(tmp_path):
 
     assert (report_dir / "report.md").exists()
     payload = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-    assert set(payload["per_mode"]) == {"comparison", "objection_handling"}
+    assert set(payload["per_mode"]) == {"cache_stale", "tcu_offline"}
     assert payload["overall"]["n"] == 2
     assert "pairwise_vs_reference" in payload["extras"]
