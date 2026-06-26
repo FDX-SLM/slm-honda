@@ -40,9 +40,12 @@ train = [
     "liger-kernel>=0.5; sys_platform == 'linux'",
 ]
 # --- Linux + CUDA ONLY. Do NOT install on Windows/CPU (no prebuilt wheels). ---
+# flash-attn is intentionally EXCLUDED: it needs source compilation and fails/stalls on Blackwell
+# (sm_120). Attention defaults to SDPA everywhere (configs set attn_implementation: sdpa), and the
+# model loader degrades any flash_attention_2 request to SDPA. Add flash-attn manually only if you
+# have a prebuilt wheel for your arch.
 gpu = [
     "unsloth>=2025.1",
-    "flash-attn>=2.5",
 ]
 # --- Evaluation: LLM judges (GPT + Gemini), lm-eval harness. ---
 eval = [

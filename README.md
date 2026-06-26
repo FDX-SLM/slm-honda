@@ -138,7 +138,7 @@ src/slm_coach/
   model_registry.py the 4 base models → {hf_id, dtype, sampling, think_native, notes}
   datagen/          core (complaint→<think>→resolution+artifacts) · sft (5 groups) · dpo (6 types) · evalset (eval + eval_hard)
   data/             schema · loader · formatting (apply_chat_template, <think>, multi-turn masking) · split
-  training/         model (Unsloth/FA2, LoRA/QLoRA) · sft · align (DPO) · callbacks
+  training/         model (Unsloth optional, SDPA attention, LoRA/QLoRA) · sft · align (DPO) · callbacks
   eval/             honda (oracle KPIs + report) · inference (offline batch) · rag (baseline) · latency
   export/           merge (LoRA→FP16) · quantize (AWQ INT4 + GGUF Q4_K_M)
   reporting/        run_facts + training_log/summary + per-mode/eval tables · charts (loss/lr/grad_norm/per-mode)
