@@ -1,0 +1,3 @@
+run,model,rc_accuracy_clear,rc_accuracy,cue_faithfulness,no_fabrication_rate,runbook_completeness,abstention_hallucination,artifact_valid_at_1,ece,latency_p95
+eval_mock,mock,1.0,1.0,1.0,1.0,1.0,0.0,1.0,0.33899999999999997,
+eval_mock_full,mock,1.0,1.0,1.0,1.0,1.0,0.0,1.0,0.3347777777777781,

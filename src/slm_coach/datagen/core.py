@@ -18,9 +18,10 @@ from slm_coach.ground_truth import (
     CUE_LIBRARY,
     OUT_OF_CATALOG_CUES,
     ROOT_CAUSES,
-    RUNBOOKS,
     SYSTEM_PROMPT,
     VAGUE_COMPLAINTS,
+    customer_self_service_ladder,
+    resolve_sub_cause,
     runbook_for,
 )
 
@@ -43,7 +44,6 @@ _FEATURES = [
     "Remote Start",
     "Remote Climate",
     "Remote Lock/Unlock",
-    "the Touring package",
     "Vehicle Finder",
     "the connected services subscription",
 ]
@@ -59,7 +59,10 @@ _RC_CUES: dict[str, list[tuple[str, str]]] = {
             "My car has been parked in an underground garage all week.",
             "parked in underground garage all week",
         ),
-        ("When I tap it in the app it just spins and then times out.", "the app spins and times out"),
+        (
+            "When I tap it in the app it just spins and then times out.",
+            "the app spins and times out",
+        ),
         ("The car has no signal where it is parked.", "car has no signal"),
         ("The car hasn't been driven in days.", "car not driven in days"),
         ("The subscription itself shows active though.", "subscription shows active"),
@@ -69,7 +72,10 @@ _RC_CUES: dict[str, list[tuple[str, str]]] = {
             "I can see it active on the website but the app shows it as off.",
             "active on the website but the app shows off",
         ),
-        ("It worked fine yesterday and then suddenly stopped.", "worked fine yesterday then stopped"),
+        (
+            "It worked fine yesterday and then suddenly stopped.",
+            "worked fine yesterday then stopped",
+        ),
         ("It's intermittent and flickers on and off.", "intermittent and flickers"),
         (
             "Logging out and back in sometimes makes it show up briefly.",
@@ -85,6 +91,33 @@ _RC_CUES: dict[str, list[tuple[str, str]]] = {
         ("It has been like this since I paid, every single time.", "since paid every single time"),
         ("Why does it still ask me to buy when I already paid?", "ask me to buy already paid"),
     ],
+    "PAYMENT_WEBHOOK_LOST": [
+        (
+            "I bought it just a few minutes ago and nothing has switched on.",
+            "bought a few minutes ago, nothing switched on",
+        ),
+        ("The charge is still processing on my card.", "charge still processing"),
+        (
+            "I paid today and the order shows up, but the feature is off.",
+            "paid today, order shows, feature off",
+        ),
+        (
+            "It has been hours ago now and it still hasn't activated.",
+            "hours ago, still not activated",
+        ),
+    ],
+    "TOKEN_SCOPE": [
+        (
+            "Opening the feature throws a 403 permission denied.",
+            "403 permission denied on the feature",
+        ),
+        ("I can sign in to the app fine for everything else.", "sign in fine for everything else"),
+        ("It logs me out the moment I open that tab.", "logs me out opening that tab"),
+        (
+            "I get access denied even after signing in again.",
+            "access denied after signing in again",
+        ),
+    ],
 }
 
 #: Minimum cues to inject (so weak/strong cases vary the confidence).
@@ -92,6 +125,8 @@ _RC_OPENERS = {
     "TCU_OFFLINE": "I bought {feature} {time} and it still won't work.",
     "ENTITLEMENT_CACHE_STALE": "I subscribed to {feature} {time} and now it's acting up.",
     "ELIGIBILITY_RULE_CONFLICT": "I paid for {feature} {time} but I can't use it.",
+    "PAYMENT_WEBHOOK_LOST": "Here's what's going on right after my purchase.",
+    "TOKEN_SCOPE": "Here's the trouble I'm hitting with the remote feature.",
 }
 
 #: The alternative RC the <think> trace down-weights, with the distinguishing reason.
@@ -108,6 +143,14 @@ _DIFFERENTIAL_ALT: dict[str, tuple[str, str]] = {
         "ENTITLEMENT_CACHE_STALE",
         "cache stale would still show the entitlement active somewhere; here nothing is active",
     ),
+    "PAYMENT_WEBHOOK_LOST": (
+        "ELIGIBILITY_RULE_CONFLICT",
+        "an eligibility block is a persistent reject, not a brand-new purchase still settling",
+    ),
+    "TOKEN_SCOPE": (
+        "ENTITLEMENT_CACHE_STALE",
+        "a stale cache shows a wrong status, it does not throw a permission error",
+    ),
 }
 
 #: What the <think> says it cannot see (so it stays calibrated, no fabricated telemetry).
@@ -115,6 +158,8 @@ _CANNOT_SEE: dict[str, str] = {
     "TCU_OFFLINE": "the TCU last_seen status",
     "ENTITLEMENT_CACHE_STALE": "the cache invalidation status",
     "ELIGIBILITY_RULE_CONFLICT": "the eligibility decision log",
+    "PAYMENT_WEBHOOK_LOST": "the payment capture or activation-event status",
+    "TOKEN_SCOPE": "the token's scope claims or expiry",
 }
 
 #: to_confirm per RC (what a human should check — no telemetry values).
@@ -127,6 +172,14 @@ _TO_CONFIRM: dict[str, list[str]] = {
     "ELIGIBILITY_RULE_CONFLICT": [
         "eligibility decision for the VIN",
         "whether an entitlement record exists",
+    ],
+    "PAYMENT_WEBHOOK_LOST": [
+        "whether the payment was captured",
+        "whether the activation event is still in retry or was dropped",
+    ],
+    "TOKEN_SCOPE": [
+        "whether the entitlement is active for the account",
+        "whether the token carries the feature scope or is expired",
     ],
 }
 
@@ -165,6 +218,20 @@ _MERMAID: dict[str, str] = {
         "  P->>E: payment.succeeded webhook\n"
         "  Note over E: eligibility rejects region/trim/plan -> no entitlement created\n"
         "  A-->>A: keeps prompting Subscribe"
+    ),
+    "PAYMENT_WEBHOOK_LOST": (
+        "sequenceDiagram\n"
+        "  participant P as Honda Pay\n  participant E as Entitlement\n  participant A as App\n"
+        "  P->>P: payment captured\n"
+        "  Note over P,E: activation event delayed/dropped -> entitlement not created\n"
+        "  A-->>A: keeps prompting Subscribe"
+    ),
+    "TOKEN_SCOPE": (
+        "sequenceDiagram\n"
+        "  participant E as Entitlement\n  participant I as IAM/HIDAS\n  participant A as App\n"
+        "  E->>I: entitlement active\n"
+        "  Note over I: token/scope not refreshed -> missing feature scope\n"
+        "  A-->>A: feature returns 403 / permission denied"
     ),
 }
 
@@ -225,27 +292,41 @@ def _customer_email(rb: dict[str, Any]) -> str:
 
 
 def build_resolution(
-    rc: str, *, confidence: float, evidence: list[str], differential: list[dict[str, str]]
+    rc: str,
+    *,
+    confidence: float,
+    evidence: list[str],
+    differential: list[dict[str, str]],
+    sub_cause: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble the §3.2 resolution package for a concrete RC straight from the runbook gold."""
+    """Assemble the §3.2 resolution package for a concrete RC straight from the runbook gold.
+
+    When ``sub_cause`` is given, why_technical / fix_steps / severity / eta_ttr are taken from the
+    sub-cause override (owner/support/escalation stay per-class), the ladder's escalation rung is
+    tailored, and ``diagnosis.sub_cause`` is emitted.
+    """
     rb = runbook_for(rc)
+    ov = resolve_sub_cause(rc, sub_cause)
+    diagnosis: dict[str, Any] = {
+        "leading_root_cause": rc,
+        "confidence": round(confidence, 2),
+        "differential": differential,
+        "evidence_in_ticket": evidence,
+        "to_confirm": _TO_CONFIRM[rc],
+    }
+    if sub_cause:
+        diagnosis["sub_cause"] = sub_cause
     return {
-        "diagnosis": {
-            "leading_root_cause": rc,
-            "confidence": round(confidence, 2),
-            "differential": differential,
-            "evidence_in_ticket": evidence,
-            "to_confirm": _TO_CONFIRM[rc],
-        },
+        "diagnosis": diagnosis,
         "runbook_id": rb["runbook_id"],
         "why_plain": rb["why_plain"],
-        "why_technical": rb["why_technical"],
+        "why_technical": ov["why_technical"],
         "owner_team": rb["owner_team"],
         "support_contact": rb["support_contact"],
         "escalation": rb["escalation"],
-        "fix_steps": rb["fix_steps"],
-        "eta_ttr": rb["eta_ttr"],
-        "severity": rb["severity"],
+        "fix_steps": ov["fix_steps"],
+        "eta_ttr": ov["eta_ttr"],
+        "severity": ov["severity"],
         "priority": rb["priority"],
         "churn_risk": rb["churn_risk"],
         "compensation": {
@@ -254,8 +335,36 @@ def build_resolution(
             "note": rb["compensation_policy"]["note"],
         },
         "similar_incident": rb["similar_incident"],
+        "customer_self_service": customer_self_service_ladder(rc, sub_cause),
         "artifacts": _render_artifacts(rc, rb, evidence),
     }
+
+
+#: Hypothesis-framed causal chain per RC (the multi-hop trace). Each is reasoning, NOT asserted
+#: telemetry — phrased so the oracle's no-fabricated-telemetry scan stays clean (no "webhook
+#: delivered/received/fired/succeeded", no "record (not) found", no timestamps).
+_CAUSAL_CHAIN: dict[str, str] = {
+    "TCU_OFFLINE": (
+        "the entitlement is active, so CCS pushes the activation toward the car, but the TCU has no "
+        "cellular signal, so the push never lands, and the feature stays off in the vehicle"
+    ),
+    "ENTITLEMENT_CACHE_STALE": (
+        "the entitlement is active upstream, but the app reads a cached view from CCS, that cache is "
+        "stale because a TTL or invalidation was missed, so the app shows the feature off even though "
+        "it is active elsewhere"
+    ),
+    "ELIGIBILITY_RULE_CONFLICT": (
+        "the payment went through at Honda Pay, the entitlement step should follow, but an eligibility "
+        "rule on region, trim, or plan likely blocked it, so no entitlement was ever created, and the "
+        "app keeps prompting to subscribe"
+    ),
+}
+
+#: Think styles a case can render in. ``clean`` is the canonical differential; the others add the
+#: two demo "wow" reasoning shapes. ``auto`` (used by SFT/DPO) picks by these weights so the model
+#: sees varied reasoning instead of one memorised template; eval/gold stay ``clean`` as a stable
+#: anchor. Tune the weights to shift how often each shape appears on screen.
+THINK_STYLE_WEIGHTS: dict[str, float] = {"clean": 0.55, "selfcorrect": 0.22, "multihop": 0.23}
 
 
 def _think_for(rc: str, evidence: list[str], confidence: float) -> str:
@@ -272,19 +381,90 @@ def _think_for(rc: str, evidence: list[str], confidence: float) -> str:
     )
 
 
-def build_case(rng: random.Random, rc: str, *, n_cues: int | None = None) -> Case:
+def _think_selfcorrect(rc: str, evidence: list[str], confidence: float) -> str:
+    """A revise-on-evidence trace: first land on the usual suspect, then a cue overturns it.
+
+    Stays cue-grounded (the pivot is a cue actually in the ticket) and never asserts a lookup result,
+    so the oracle's no-fabricated-telemetry rule still passes.
+    """
+    alt_rc, alt_why = _DIFFERENTIAL_ALT[rc]
+    alt_one_line = CUE_LIBRARY[alt_rc]["one_line"]
+    cues_phrase = "; ".join(evidence)
+    cannot = _CANNOT_SEE[rc]
+    one_line = CUE_LIBRARY[rc]["one_line"]
+    return (
+        f"My first instinct is {alt_rc}: {alt_one_line} that's the common case. "
+        f"But re-reading the ticket, the cues are: {cues_phrase}. {one_line} "
+        f"And {alt_why}, which rules {alt_rc} out — so I revise my leading hypothesis to {rc}. "
+        f"I cannot see {cannot} from the ticket, so I keep confidence around {confidence:.2f} "
+        f"and flag what a human should verify."
+    )
+
+
+def _think_multihop(rc: str, evidence: list[str], confidence: float) -> str:
+    """A multi-hop causal trace: walk the chain end to end, framed as hypothesis, then calibrate."""
+    cues_phrase = "; ".join(evidence)
+    cannot = _CANNOT_SEE[rc]
+    one_line = CUE_LIBRARY[rc]["one_line"]
+    chain = _CAUSAL_CHAIN[rc]
+    return (
+        f"Tracing the likely chain: {chain}. The cues in the ticket are: {cues_phrase}. {one_line} "
+        f"so my leading hypothesis is {rc}. I cannot see {cannot} from the ticket, so I keep "
+        f"confidence around {confidence:.2f} and flag what a human should verify."
+    )
+
+
+#: Closing self-triage rationale appended to every <think> (justifies the step-by-step ladder).
+_LADDER_RATIONALE = (
+    " Meanwhile I give the customer a step-by-step self-triage, fastest first: a quick app refresh "
+    "rules out a stale cache, getting the car into open signal rules out or fixes a connectivity "
+    "issue, and if neither helps it points to a server-side activation problem we handle."
+)
+
+
+def _with_ladder(think: str) -> str:
+    """Append the self-triage rationale so the <think> motivates the customer_self_service ladder."""
+    return think + _LADDER_RATIONALE
+
+
+_THINK_BUILDERS = {
+    "clean": lambda rc, ev, c: _with_ladder(_think_for(rc, ev, c)),
+    "selfcorrect": lambda rc, ev, c: _with_ladder(_think_selfcorrect(rc, ev, c)),
+    "multihop": lambda rc, ev, c: _with_ladder(_think_multihop(rc, ev, c)),
+}
+
+
+def _pick_think(
+    rng: random.Random, rc: str, evidence: list[str], confidence: float, style: str
+) -> str:
+    """Render the <think> trace for ``rc`` in the requested style (``auto`` = weighted random)."""
+    if style == "auto":
+        styles, weights = zip(*THINK_STYLE_WEIGHTS.items())
+        style = rng.choices(styles, weights=weights, k=1)[0]
+    builder = _THINK_BUILDERS.get(style)
+    if builder is None:
+        raise ValueError(f"unknown think style {style!r}; valid: {list(_THINK_BUILDERS)} or 'auto'")
+    return builder(rc, evidence, confidence)
+
+
+def build_case(
+    rng: random.Random, rc: str, *, n_cues: int | None = None, style: str = "clean"
+) -> Case:
     """Synthesize one grounded complaint→resolution case for a concrete RC.
 
     Args:
         rng: Seeded RNG for reproducible variety.
         rc: One of :data:`slm_coach.ground_truth.ROOT_CAUSES`.
         n_cues: How many distinguishing cues to inject (defaults to 2-3 → varies confidence).
+        style: <think> reasoning shape — ``clean`` (canonical differential, the eval/gold anchor),
+            ``selfcorrect`` (revise-on-evidence), ``multihop`` (causal chain), or ``auto``
+            (weighted random per :data:`THINK_STYLE_WEIGHTS`; used by SFT/DPO for diversity).
 
     Returns:
         A :class:`Case` whose resolution passes the oracle by construction.
     """
     if rc not in ROOT_CAUSES:
-        raise ValueError(f"build_case expects a concrete RC, got {rc!r}")
+        raise ValueError(f"build_case expects a known root cause, got {rc!r}")
     all_cues = _RC_CUES[rc]
     primary = all_cues[0]  # always injected → guarantees detect_rcs == {rc}
     rest = list(all_cues[1:])
@@ -305,11 +485,13 @@ def build_case(rng: random.Random, rc: str, *, n_cues: int | None = None) -> Cas
         {"rc": rc, "likelihood": "high", "why": CUE_LIBRARY[rc]["one_line"]},
         {"rc": alt_rc, "likelihood": "low", "why": alt_why},
     ]
-    think = _think_for(rc, evidence, confidence)
+    think = _pick_think(rng, rc, evidence, confidence, style)
     resolution = build_resolution(
         rc, confidence=confidence, evidence=evidence, differential=differential
     )
-    return Case(leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
+    return Case(
+        leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +531,7 @@ def build_abstention(rng: random.Random, *, kind: str = "vague") -> Case:
         "active anywhere, whether the car is offline, or whether the app keeps asking to "
         "subscribe. With no single cue, I do not commit to a root cause; I keep confidence low "
         f"({confidence:.2f}) and route to a human after listing what to confirm."
-    )
+    ) + _LADDER_RATIONALE
     resolution = make_abstention_resolution(confidence, evidence, differential)
     return Case(
         leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence
@@ -388,6 +570,7 @@ def make_abstention_resolution(
         "churn_risk": {"level": "medium", "why": "paid customer with an unresolved, unclear issue"},
         "compensation": None,
         "similar_incident": None,
+        "customer_self_service": customer_self_service_ladder(ABSTAIN),
         "artifacts": {
             "rca_md": "## Root Cause Analysis\nInsufficient evidence — routed to human triage.",
             "work_order_md": f"## Work Order\n- Action: {_ABSTAIN_ROUTE}",
@@ -433,7 +616,9 @@ def authored_case(
     )
     if churn_override is not None:
         resolution["churn_risk"] = churn_override
-    return Case(leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
+    return Case(
+        leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+    )
 
 
 def authored_abstention(
@@ -446,14 +631,26 @@ def authored_abstention(
         {"rc": b, "likelihood": "low", "why": "would need a confirming signal not stated here"},
     ]
     resolution = make_abstention_resolution(confidence, evidence, differential)
-    return Case(leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
+    return Case(
+        leading=ABSTAIN, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+    )
 
 
 def _short_fragment(text: str) -> str:
     """Pick a short (≤3-token) literal fragment from a complaint for grounded abstention evidence."""
     lowered = text.lower()
-    for marker in ("403", "logs me out", "logged out", "permission denied", "refund", "dispute",
-                   "crashes", "crash", "ota", "update"):
+    for marker in (
+        "403",
+        "logs me out",
+        "logged out",
+        "permission denied",
+        "refund",
+        "dispute",
+        "crashes",
+        "crash",
+        "ota",
+        "update",
+    ):
         if marker in lowered:
             return marker
     words = re.sub(r"[^a-z0-9 ]+", " ", lowered).split()
@@ -516,7 +713,9 @@ def answer_for_complaint(complaint: str) -> Case:
         resolution = build_resolution(
             rc, confidence=confidence, evidence=evidence, differential=differential
         )
-        return Case(leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence)
+        return Case(
+            leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence
+        )
     # No single distinguishing cue → abstain (reuse the abstention package shape).
     case = build_abstention(random.Random(0))
     case.complaint = complaint

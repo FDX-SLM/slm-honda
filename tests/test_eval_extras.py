@@ -83,9 +83,16 @@ def test_gold_dataset_valid_and_covers_rc_slices():
     cases = load_gold_cases(path)
     assert len(cases) >= 14
     modes = {c.mode for c in cases}
-    # The eval gold covers the 3 root causes + abstention (knowledge/differential/distractor are
+    # The eval gold covers all 5 root causes + abstention (knowledge/differential/distractor are
     # SFT-only slices, not eval targets).
-    assert modes == {"tcu_offline", "cache_stale", "eligibility", "abstention"}
+    assert modes == {
+        "tcu_offline",
+        "cache_stale",
+        "eligibility",
+        "payment_webhook",
+        "token_scope",
+        "abstention",
+    }
     assert modes <= {m.value for m in Mode}
     assert all(c.reference.strip() for c in cases)  # every eval case has a gold reference
     assert all(c.prompt and c.prompt[0]["role"] != "assistant" for c in cases)

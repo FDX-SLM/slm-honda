@@ -27,7 +27,7 @@ from slm_coach.datagen.core import (
     build_resolution,
 )
 from slm_coach.datagen.records import pref_record
-from slm_coach.ground_truth import RC_TO_SLICE, ROOT_CAUSES
+from slm_coach.ground_truth import GENERATABLE_RCS, RC_TO_SLICE, ROOT_CAUSES
 
 DPO_TYPES: tuple[str, ...] = (
     "cue_dropped",
@@ -36,6 +36,7 @@ DPO_TYPES: tuple[str, ...] = (
     "missing_fields",
     "forced_guess",
     "overpromise",
+    "single_path",
 )
 PER_TYPE_DEFAULT = 100
 
@@ -52,7 +53,7 @@ Pair = tuple[list[dict[str, str]], str, str, str]  # (prompt, chosen, rejected, 
 
 
 def _pair_cue_dropped(rng: random.Random) -> Pair:
-    case = build_case(rng, "TCU_OFFLINE")
+    case = build_case(rng, "TCU_OFFLINE", style="auto")
     wrong = "ENTITLEMENT_CACHE_STALE"
     rej_res = build_resolution(
         wrong,
@@ -73,8 +74,8 @@ def _pair_cue_dropped(rng: random.Random) -> Pair:
 
 
 def _pair_fabricated(rng: random.Random) -> Pair:
-    rc = rng.choice(ROOT_CAUSES)
-    case = build_case(rng, rc)
+    rc = rng.choice(GENERATABLE_RCS)
+    case = build_case(rng, rc, style="auto")
     rej_res = copy.deepcopy(case.resolution)
     rej_res["diagnosis"]["confidence"] = 0.95
     rej_think = (
@@ -90,8 +91,8 @@ def _pair_fabricated(rng: random.Random) -> Pair:
 
 
 def _pair_overconfident(rng: random.Random) -> Pair:
-    rc = rng.choice(ROOT_CAUSES)
-    case = build_case(rng, rc)
+    rc = rng.choice(GENERATABLE_RCS)
+    case = build_case(rng, rc, style="auto")
     rej_res = copy.deepcopy(case.resolution)
     rej_res["diagnosis"]["confidence"] = 0.97
     rej_res["diagnosis"]["differential"] = [
@@ -107,8 +108,8 @@ def _pair_overconfident(rng: random.Random) -> Pair:
 
 
 def _pair_missing_fields(rng: random.Random) -> Pair:
-    rc = rng.choice(ROOT_CAUSES)
-    case = build_case(rng, rc)
+    rc = rng.choice(GENERATABLE_RCS)
+    case = build_case(rng, rc, style="auto")
     rej_res = copy.deepcopy(case.resolution)
     rej_res.pop("churn_risk", None)
     rej_res.pop("compensation", None)
@@ -122,7 +123,7 @@ def _pair_missing_fields(rng: random.Random) -> Pair:
 
 def _pair_forced_guess(rng: random.Random) -> Pair:
     case = build_abstention(rng, kind=rng.choice(["vague", "out_of_catalog"]))
-    rc = rng.choice(ROOT_CAUSES)
+    rc = rng.choice(GENERATABLE_RCS)
     rej_res = build_resolution(
         rc,
         confidence=0.88,
@@ -139,7 +140,7 @@ def _pair_forced_guess(rng: random.Random) -> Pair:
 
 
 def _pair_overpromise(rng: random.Random) -> Pair:
-    case = build_case(rng, "ELIGIBILITY_RULE_CONFLICT")
+    case = build_case(rng, "ELIGIBILITY_RULE_CONFLICT", style="auto")
     rej_res = copy.deepcopy(case.resolution)
     rej_res["compensation"] = {
         "offer": "full refund plus one year of free service",
@@ -158,6 +159,27 @@ def _pair_overpromise(rng: random.Random) -> Pair:
     )
 
 
+def _pair_single_path(rng: random.Random) -> Pair:
+    """Tiered self-service ladder (chosen) vs one shallow instruction (rejected)."""
+    rc = rng.choice(GENERATABLE_RCS)
+    case = build_case(rng, rc, style="auto")
+    rej_res = copy.deepcopy(case.resolution)
+    full = case.resolution.get("customer_self_service") or [{}]
+    first = dict(full[0]) if isinstance(full[0], dict) else {}
+    first["if_fails"] = "contact support"
+    rej_res["customer_self_service"] = [first]  # only one shallow step, no step-by-step ladder
+    rej_think = (
+        case.think.split(" Meanwhile")[0]
+        + " I'll just give the customer the single most likely fix and leave it at that."
+    )
+    return (
+        _prompt(case.complaint),
+        assistant_content(case.think, case.resolution),
+        assistant_content(rej_think, rej_res),
+        RC_TO_SLICE[rc],
+    )
+
+
 _BUILDERS = {
     "cue_dropped": _pair_cue_dropped,
     "fabricated_telemetry": _pair_fabricated,
@@ -165,6 +187,7 @@ _BUILDERS = {
     "missing_fields": _pair_missing_fields,
     "forced_guess": _pair_forced_guess,
     "overpromise": _pair_overpromise,
+    "single_path": _pair_single_path,
 }
 
 

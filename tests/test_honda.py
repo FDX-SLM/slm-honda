@@ -10,7 +10,7 @@ from slm_coach.datagen.evalset import EVAL_HARD, generate_eval
 from slm_coach.datagen.sft import generate_sft
 from slm_coach.eval.honda import aggregate, score_sample
 from slm_coach.eval.rag import RagBaseline
-from slm_coach.ground_truth import ABSTAIN, ROOT_CAUSES, RUNBOOKS, render_runbook
+from slm_coach.ground_truth import ABSTAIN, GENERATABLE_RCS, ROOT_CAUSES, RUNBOOKS, render_runbook
 from slm_coach.oracle import (
     check_resolution,
     detect_rcs,
@@ -57,7 +57,7 @@ def test_detect_rcs_single_cue():
 def test_generated_cases_pass_oracle():
     rng = random.Random(1)
     for _ in range(50):
-        for rc in ROOT_CAUSES:
+        for rc in GENERATABLE_RCS:
             c = build_case(rng, rc)
             assert check_resolution(c.complaint, c.think, c.resolution).ok
     for kind in ("vague", "out_of_catalog"):
@@ -95,10 +95,10 @@ def test_authored_seeds_pass_oracle():
 
 
 def test_generate_dpo_six_types():
-    records = generate_dpo(42, limit=60)
+    records = generate_dpo(42, limit=70)
     assert {r["bad_type"] for r in records} == {
         "cue_dropped", "fabricated_telemetry", "overconfident",
-        "missing_fields", "forced_guess", "overpromise",
+        "missing_fields", "forced_guess", "overpromise", "single_path",
     }
     # chosen passes the oracle (rejected need not).
     for r in records:

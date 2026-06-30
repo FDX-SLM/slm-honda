@@ -19,9 +19,9 @@ from typing import Any
 from slm_coach.datagen.core import SYSTEM_PROMPT, assistant_content, build_abstention, build_case, sft_messages
 from slm_coach.datagen.records import sft_record
 from slm_coach.ground_truth import (
+    GENERATABLE_RCS,
     RC_TO_RUNBOOK,
     RC_TO_SLICE,
-    ROOT_CAUSES,
     RUNBOOKS,
     SEVERITY_NOTES,
     incidents_for,
@@ -54,9 +54,9 @@ def group_complaint_resolution(rng: random.Random, n: int) -> list[dict[str, Any
     out: list[dict[str, Any]] = []
     i = 0
     while len(out) < n:
-        rc = ROOT_CAUSES[i % len(ROOT_CAUSES)]
+        rc = GENERATABLE_RCS[i % len(GENERATABLE_RCS)]
         i += 1
-        case = build_case(rng, rc)
+        case = build_case(rng, rc, style="auto")
         if not _accept(case.complaint, case.think, case.resolution):
             continue
         out.append(
@@ -77,9 +77,9 @@ def group_differential(rng: random.Random, n: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     i = 0
     while len(out) < n:
-        rc = ROOT_CAUSES[i % len(ROOT_CAUSES)]
+        rc = GENERATABLE_RCS[i % len(GENERATABLE_RCS)]
         i += 1
-        case = build_case(rng, rc, n_cues=2)  # fewer cues → genuine differential
+        case = build_case(rng, rc, n_cues=2, style="auto")  # fewer cues → genuine differential
         if not _accept(case.complaint, case.think, case.resolution):
             continue
         out.append(
@@ -96,12 +96,12 @@ def group_differential(rng: random.Random, n: int) -> list[dict[str, Any]]:
 def group_distractors(rng: random.Random, n: int) -> list[dict[str, Any]]:
     """Strictly cycle the 3 RCs so the RC distribution stays balanced (chống thiên lệch)."""
     out: list[dict[str, Any]] = []
-    order = list(ROOT_CAUSES)
+    order = list(GENERATABLE_RCS)
     i = 0
     while len(out) < n:
         rc = order[i % 3]
         i += 1
-        case = build_case(rng, rc, n_cues=rng.choice([1, 2]) + 1)
+        case = build_case(rng, rc, n_cues=rng.choice([1, 2]) + 1, style="auto")
         if not _accept(case.complaint, case.think, case.resolution):
             continue
         out.append(
@@ -238,7 +238,7 @@ def _field_qa(rc: str) -> list[tuple[str, str]]:
 def group_knowledge(rng: random.Random, n: int) -> list[dict[str, Any]]:
     """Generate runbook-field Q&A across all 3 RCs (plain user/assistant, no system turn)."""
     pairs: list[tuple[str, str]] = []
-    for rc in ROOT_CAUSES:
+    for rc in GENERATABLE_RCS:
         for q, a in _field_qa(rc):
             pairs.extend(_bidir(rng, q, a))
     rng.shuffle(pairs)

@@ -32,6 +32,7 @@ from slm_coach.oracle import (
     parse_output,
     runbook_complete,
     runbook_fidelity_ok,
+    self_service_ok,
 )
 from slm_coach.utils.logging import get_logger
 
@@ -59,6 +60,7 @@ class SampleEval:
     runbook_complete: bool
     runbook_fidelity: bool
     artifacts_valid: bool
+    self_service_ok: bool = False
     telemetry_hits: list[str] = field(default_factory=list)
 
 
@@ -74,6 +76,7 @@ class HondaReport:
     runbook_completeness: float
     runbook_fidelity: float
     artifact_valid_at_1: float
+    self_service_present_rate: float
     abstention_hallucination: float
     ece: float
     overconfident_wrong_rate: float
@@ -133,6 +136,7 @@ def score_sample(case: dict[str, Any], answer: str) -> SampleEval:
             runbook_complete=False,
             runbook_fidelity=False,
             artifacts_valid=False,
+            self_service_ok=False,
         )
 
     diag = resolution.get("diagnosis", {}) or {}
@@ -170,6 +174,7 @@ def score_sample(case: dict[str, Any], answer: str) -> SampleEval:
         runbook_complete=complete,
         runbook_fidelity=fidelity,
         artifacts_valid=artifacts_valid,
+        self_service_ok=self_service_ok(resolution),
         telemetry_hits=res.telemetry_hits,
     )
 
@@ -239,6 +244,7 @@ def aggregate(samples: Sequence[SampleEval]) -> HondaReport:
         runbook_completeness=_mean([1.0 if s.runbook_complete else 0.0 for s in rc_pred]) if rc_pred else 0.0,
         runbook_fidelity=_mean([1.0 if s.runbook_fidelity else 0.0 for s in rc_pred]) if rc_pred else 0.0,
         artifact_valid_at_1=_mean([1.0 if s.artifacts_valid else 0.0 for s in samples]),
+        self_service_present_rate=_mean([1.0 if s.self_service_ok else 0.0 for s in samples]),
         abstention_hallucination=(
             _mean([1.0 if s.pred_rc != ABSTAIN else 0.0 for s in abstain_cases])
             if abstain_cases
@@ -363,7 +369,7 @@ def write_per_sample_csv(out_dir: str | Path, samples: Sequence[SampleEval]) -> 
     cols = [
         "id", "slice", "gold_rc", "pred_rc", "correct", "confidence", "cue_grounded_frac",
         "no_fabricated_telemetry", "runbook_complete", "runbook_fidelity", "artifacts_valid",
-        "telemetry_hits",
+        "self_service_ok", "telemetry_hits",
     ]
     with out.open("w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
@@ -465,8 +471,48 @@ def run_honda_eval(
     extras = {"model": str(model_path), "gold": str(gold_path), "mock": mock}
     write_honda_report(report_dir, report, extras=extras)
     write_per_sample_csv(report_dir, samples)
+    _log_eval_to_langfuse(config, run_name, cases, answers, samples, model_path=str(model_path))
     logger.info("Honda eval complete", extra={"report_dir": str(report_dir)})
     return report_dir
+
+
+def _log_eval_to_langfuse(
+    config: EvalFileConfig,
+    run_name: str,
+    cases: Sequence[dict[str, Any]],
+    answers: Sequence[str],
+    samples: Sequence[SampleEval],
+    *,
+    model_path: str,
+) -> None:
+    """Push each evaluated sample (full prompt → generated answer + scores) to Langfuse.
+
+    No-op when the tracking extra is missing or the Langfuse keys are unset (Tracker degrades
+    gracefully), so eval never depends on it. Unlike the training-time callback this logs the FULL
+    generation for EVERY case, not a single truncated peek.
+    """
+    from slm_coach.tracking import init_tracking
+
+    tracker = init_tracking(config, run_name=run_name)
+    if not tracker.langfuse_enabled:
+        return
+    try:
+        for c, answer, s in zip(cases, answers, samples, strict=False):
+            tracker.log_generation(
+                name="eval_sample",
+                prompt=c["complaint"],
+                completion=answer,
+                eval_id=s.id,
+                slice=s.slice,
+                gold_rc=s.gold_rc,
+                pred_rc=s.pred_rc,
+                correct=s.correct,
+                confidence=s.confidence,
+                no_fabricated_telemetry=s.no_fabricated_telemetry,
+                model=model_path,
+            )
+    finally:
+        tracker.close()
 
 
 def _measure_latency(model: Any, tokenizer: Any, prompts: list, config: EvalFileConfig) -> dict:

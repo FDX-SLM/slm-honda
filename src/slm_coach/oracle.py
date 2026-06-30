@@ -35,6 +35,8 @@ from slm_coach.ground_truth import (
     RC_TO_RUNBOOK,
     ROOT_CAUSES,
     RUNBOOKS,
+    SUB_CAUSES,
+    sub_causes_for,
 )
 
 # ---------------------------------------------------------------------------
@@ -181,16 +183,37 @@ CUE_SIGNATURES: dict[str, list[list[str]]] = {
         ["limited region"],
         ["trim"],
     ],
+    "PAYMENT_WEBHOOK_LOST": [
+        ["just bought"],
+        ["just paid"],
+        ["just purchased"],
+        ["just now"],
+        ["minutes ago"],
+        ["this morning"],
+        ["an hour ago"],
+        ["hours ago"],
+        ["bought today"],
+        ["paid today"],
+        ["pending"],
+        ["still processing"],
+        ["payment processing"],
+    ],
+    "TOKEN_SCOPE": [
+        ["403"],
+        ["permission denied"],
+        ["access denied"],
+        ["logs me out"],
+        ["kicked out"],
+        ["permission error"],
+    ],
 }
 
+#: Genuinely out-of-catalog (route to abstention) — billing/refund/crash/OTA only.
+#: 403/permission moved into TOKEN_SCOPE (now an in-catalog RC).
 _OUT_OF_CATALOG_SIGNATURES: list[list[str]] = [
-    ["403"],
-    ["logs me out"],
-    ["kicked out"],
-    ["permission denied"],
-    ["access denied"],
     ["refund"],
     ["dispute"],
+    ["chargeback"],
     ["crashes"],
     ["crash"],
     ["ota"],
@@ -321,7 +344,42 @@ def _reasoning_scope(think: str, resolution: dict[str, Any]) -> str:
     for d in diag.get("differential", []) or []:
         if isinstance(d, dict) and d.get("why"):
             parts.append(str(d["why"]))
+    # The customer self-service ladder is customer-facing reasoning → scan it for fabrication too.
+    for step in resolution.get("customer_self_service", []) or []:
+        if isinstance(step, dict):
+            for k in ("action", "verify", "if_fails"):
+                if step.get(k):
+                    parts.append(str(step[k]))
     return "\n".join(parts)
+
+
+#: Over-promise phrases a resolution must never make to the customer (policy guardrail).
+OVERPROMISE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bfull refund\b", re.IGNORECASE),
+    re.compile(r"\byears?\s+(?:of\s+)?free\b", re.IGNORECASE),
+    re.compile(r"\bfree\s+for\s+life\b", re.IGNORECASE),
+    re.compile(r"\bguarantee[ds]?\b", re.IGNORECASE),
+)
+
+
+def find_overpromise(text: str) -> list[str]:
+    """Return over-promise pattern hits in customer-facing text (empty = clean)."""
+    hits: list[str] = []
+    for pat in OVERPROMISE_PATTERNS:
+        for m in pat.finditer(text or ""):
+            hits.append(m.group(0))
+    return hits
+
+
+def self_service_ok(resolution: dict[str, Any]) -> bool:
+    """Whether the customer_self_service ladder is present, ordered (tier 1..n), and ≥3 rungs."""
+    ladder = resolution.get("customer_self_service")
+    if not isinstance(ladder, list) or len(ladder) < 3:
+        return False
+    for i, step in enumerate(ladder, start=1):
+        if not isinstance(step, dict) or step.get("tier") != i or not str(step.get("action", "")).strip():
+            return False
+    return True
 
 
 def check_resolution(
@@ -408,7 +466,32 @@ def check_resolution(
         # Abstention must NOT fabricate a runbook (route to human).
         runbook_fidelity = _check_abstention_shape(resolution, failures)
 
-    ok = no_fab and cue_grounding and rc_cue_match and runbook_fidelity and calibration
+    # --- sub_cause must be a known failure mode of the asserted class (if present) ---
+    sub_cause = str(diag.get("sub_cause", "")).strip()
+    sub_cause_ok = True
+    if sub_cause:
+        if leading not in ROOT_CAUSES or sub_cause not in sub_causes_for(leading):
+            sub_cause_ok = False
+            failures.append(f"unknown sub_cause {sub_cause!r} for {leading!r}")
+
+    # --- Rule 6: customer self-service ladder present + ordered, and no over-promise ---
+    ladder_ok = self_service_ok(resolution)
+    if not ladder_ok:
+        failures.append("customer_self_service ladder missing, too short, or mis-ordered")
+    overpromise_scope = "\n".join(
+        [str(s.get("action", "")) for s in resolution.get("customer_self_service", []) or []]
+        + [str((resolution.get("artifacts") or {}).get("customer_email", ""))]
+        + [str((resolution.get("compensation") or {}).get("offer", "") if isinstance(resolution.get("compensation"), dict) else "")]
+    )
+    overpromise_hits = find_overpromise(overpromise_scope)
+    no_overpromise = not overpromise_hits
+    if not no_overpromise:
+        failures.append(f"over-promise to customer: {overpromise_hits}")
+
+    ok = (
+        no_fab and cue_grounding and rc_cue_match and runbook_fidelity and calibration
+        and ladder_ok and no_overpromise and sub_cause_ok
+    )
     return OracleResult(
         ok=ok,
         failures=failures,
@@ -436,10 +519,13 @@ def _check_runbook_fidelity(
         if str(resolution.get(field_name, "")).strip() != str(rb[field_name]).strip():
             failures.append(f"runbook field {field_name} does not match gold")
             ok = False
-    # severity / priority must match (severity allows the documented escalation note).
+    # severity may vary by sub-cause: accept the class base OR any of its sub-cause severities.
     sev = str(resolution.get("severity", "")).strip()
-    if not sev.startswith(rb["severity"]):
-        failures.append(f"severity {sev!r} does not match gold {rb['severity']!r}")
+    allowed_sev = {rb["severity"]} | {
+        str(sc.get("severity", "")) for sc in SUB_CAUSES.get(rc_class, {}).values()
+    }
+    if not any(sev.startswith(a) for a in allowed_sev if a):
+        failures.append(f"severity {sev!r} not valid for {rc_class} (allowed {sorted(allowed_sev)})")
         ok = False
     if str(resolution.get("priority", "")).strip() != rb["priority"]:
         failures.append(f"priority {resolution.get('priority')!r} != {rb['priority']!r}")
@@ -475,6 +561,7 @@ RUNBOOK_REQUIRED_FIELDS: tuple[str, ...] = (
     "priority",
     "churn_risk",
     "compensation",
+    "customer_self_service",
 )
 
 

@@ -16,11 +16,15 @@ from slm_coach.ground_truth import ABSTAIN, RC_TO_SLICE, ROOT_CAUSES
 
 
 def generate_eval(seed: int = 999, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Generate a balanced eval set (3 RC + abstention) with a held-out seed (default 999)."""
+    """Generate a balanced eval set (all 5 RC + abstention) with a held-out seed (default 999).
+
+    Covers the full trained taxonomy so per-slice accuracy is measured fairly (a 3-RC gold would
+    score 5-RC predictions as wrong whenever they leaked into the untested payment/token classes).
+    """
     rng = random.Random(seed)
     n = limit or 180
     out: list[dict[str, Any]] = []
-    # 3 RC + abstention, roughly even.
+    # All 5 RC + abstention, roughly even.
     plan = [*ROOT_CAUSES, ABSTAIN]
     i = 0
     while len(out) < n:

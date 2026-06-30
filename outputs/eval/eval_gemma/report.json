@@ -1,0 +1,88 @@
+{
+  "n": 180,
+  "rc_accuracy": 0.8888888888888888,
+  "rc_accuracy_clear": 0.9,
+  "cue_faithfulness": 0.9981481481481481,
+  "no_fabrication_rate": 1.0,
+  "runbook_completeness": 1.0,
+  "runbook_fidelity": 0.9867549668874173,
+  "artifact_valid_at_1": 1.0,
+  "self_service_present_rate": 1.0,
+  "abstention_hallucination": 0.16666666666666666,
+  "ece": 0.21866666666666668,
+  "overconfident_wrong_rate": 0.0,
+  "parse_fail_rate": 0.0,
+  "per_slice_accuracy": {
+    "abstention": 0.8333333333333334,
+    "cache_stale": 0.9666666666666667,
+    "eligibility": 0.5333333333333333,
+    "payment_webhook": 1.0,
+    "tcu_offline": 1.0,
+    "token_scope": 1.0
+  },
+  "confusion": {
+    "TCU_OFFLINE": {
+      "TCU_OFFLINE": 30,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "ENTITLEMENT_CACHE_STALE": {
+      "TCU_OFFLINE": 1,
+      "ENTITLEMENT_CACHE_STALE": 29,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "ELIGIBILITY_RULE_CONFLICT": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 2,
+      "ELIGIBILITY_RULE_CONFLICT": 16,
+      "PAYMENT_WEBHOOK_LOST": 12,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "PAYMENT_WEBHOOK_LOST": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 30,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "TOKEN_SCOPE": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 30,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "INSUFFICIENT_EVIDENCE": {
+      "TCU_OFFLINE": 1,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 25,
+      "PARSE_FAIL": 0,
+      "CLIENT_APP_CRASH": 1,
+      "OTA_UPDATE_FAILED": 1,
+      "OTA_TCU_OFFLINE": 2
+    }
+  },
+  "latency": null,
+  "extras": {
+    "model": "checkpoints/sft_gemma/best",
+    "gold": "data/gold/gold_test.jsonl",
+    "mock": false
+  }
+}

@@ -14,7 +14,7 @@ data:
   dir: "data"
   keep_audit_status: ["approved"] # only train on approved records
   lang: "en"                      # data + runbook + output are English (PoC §0)
-  holdout_dir: null               # null → use the in-memory sft.val_split; set to a dir after split_holdout.py
+  holdout_dir: "data/holdout"     # frozen stratified split shared across all 4 bases (run scripts/split_holdout.py)
   val_fraction: 0.10
   val_min_total: 60
   pref_val_fraction: 0.10

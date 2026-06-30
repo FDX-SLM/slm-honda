@@ -72,7 +72,7 @@ uv run python scripts/split_holdout.py --config configs/sft.yaml   # materialize
 ### 3 — Train SFT (model-agnostic — switch base with `--base`)
 ```bash
 uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen      # → checkpoints/sft_qwen/best
-# also: --base gemma | phi | granite   (Qwen/Qwen3.5-9B · google/gemma-4-12b-it · microsoft/phi-4 · ibm-granite/granite-4.1-8b-instruct)
+# also: --base gemma | phi | granite   (Qwen/Qwen3.5-9B · google/gemma-4-12B-it · microsoft/phi-4 · ibm-granite/granite-4.1-8b)
 ```
 Training writes report artifacts under `checkpoints/sft_<base>/metrics/`: `run_facts.csv/.md`
 (base, method, precision, **gradient_checkpointing**, effective batch, masking, data counts),

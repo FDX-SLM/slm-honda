@@ -13,49 +13,51 @@ model_name: "Qwen/Qwen3.5-9B"   # overridden by --base
 lora:
   r: 32
   alpha: 64
-  dropout: 0.05
+  dropout: 0.1
   target_modules: "all-linear"
   bias: "none"
 
 quant:
-  load_in_4bit: true              # QLoRA (fits 14B on 1×96GB; flip to false for full bf16 LoRA)
+  load_in_4bit: false              # full bf16 LoRA (fits 14B on 1×96GB); flip to true for QLoRA 4-bit
 
 model:
-  max_seq_len: 2048               # complaint + <think> + JSON package fits in 2048
+  max_seq_len: 2048               # full seq (sys+user+think+JSON+artifacts) p95≈1752, max 2711; 2048 covers 99.5%
   attn_implementation: "sdpa"     # SDPA everywhere; set flash_attention_2 only if installed
   use_unsloth: false              # enable on Linux+CUDA if Unsloth supports the arch
   dtype: "bfloat16"
 
 sft:
-  epochs: 3
-  lr: 2.0e-4                      # QLoRA range (full-FT would be 1e-5..2e-5)
-  batch_size: 8
-  eval_batch_size: 2
-  grad_accum: 2                   # effective batch = 16
+  epochs: 2
+  lr: 1.0e-4                     # LoRA range (1e-4..2e-4); full-FT would be 1e-5..2e-5
+  batch_size: 4
+  eval_batch_size: 8
+  grad_accum: 4                   # effective batch = 16
   warmup_ratio: 0.03
-  weight_decay: 0.0
+  weight_decay: 0.01
   lr_scheduler_type: "cosine"
   max_grad_norm: 1.0
   optim: "adamw_torch"
   gradient_checkpointing: true
-  use_liger_kernel: false
+  use_liger_kernel: true           # fused linear-CE: no full logits tensor → fixes large-vocab OOM (qwen)
   max_seq_len: 2048
   train_on_responses_only: true   # loss only on the assistant turn (incl. the <think> block)
   multiturn_masking: true
   packing: false
-  val_split: 0.05                 # held-out slice to watch overfit
-  save_steps: 50
-  eval_steps: 50
+  val_split: 0.1                 # held-out slice to watch overfit
+  save_steps: 40
+  eval_steps: 40
   logging_steps: 5
   save_total_limit: 2
   load_best_model_at_end: true
   metric_for_best_model: "eval_loss"
   greater_is_better: false
-  early_stopping_patience: 4
+  early_stopping_patience: 3
 
 eval_during_training:
-  enabled: true
+  enabled: false                   # skip rubric/Langfuse callback during train (truncated, rubric≈0);
+                                   # eval_loss still picks best via load_best_model_at_end + early-stop.
+                                   # Full per-sample generations go to Langfuse via evaluate.py after train.
   gold_subset: "data/gold/gold_test.jsonl"
-  subset_size: 16
-  max_new_tokens: 512
+  subset_size: 2
+  max_new_tokens: 1536
   use_judge: false                # fast proxy during training (no API); full oracle eval runs after

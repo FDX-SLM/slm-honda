@@ -44,7 +44,7 @@ _SPECS: tuple[ModelSpec, ...] = (
     ),
     ModelSpec(
         key="gemma",
-        hf_id="google/gemma-4-12b-it",
+        hf_id="google/gemma-4-12B-it",
         params="12B",
         dtype="bfloat16",
         think_native=False,
@@ -63,7 +63,7 @@ _SPECS: tuple[ModelSpec, ...] = (
     ),
     ModelSpec(
         key="granite",
-        hf_id="ibm-granite/granite-4.1-8b-instruct",
+        hf_id="ibm-granite/granite-4.1-8b",
         params="8B",
         dtype="bfloat16",
         think_native=False,

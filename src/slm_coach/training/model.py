@@ -48,8 +48,12 @@ def supports_assistant_mask(tokenizer: Any) -> bool:
     ``{% generation %}`` markers. When absent, enabling it would crash — callers should disable
     masking with a warning instead.
     """
+    import re
+
     template = getattr(tokenizer, "chat_template", None) or ""
-    return "generation" in template
+    # TRL needs the actual ``{% generation %}`` Jinja block — not just the word "generation"
+    # (granite/gemma templates contain ``add_generation_prompt`` but no generation block).
+    return bool(re.search(r"\{\%-?\s*generation\s*-?\%\}", template))
 
 
 def precision_kwargs() -> dict[str, bool]:

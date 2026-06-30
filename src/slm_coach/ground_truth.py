@@ -87,8 +87,18 @@ CHURN_RISK_LEVELS: tuple[str, ...] = ("low", "low-medium", "medium", "medium-hig
 # Root-cause classes + abstention
 # ---------------------------------------------------------------------------
 
-#: The three in-catalog root-cause classes the model may conclude.
+#: The five in-catalog root-cause classes the model may conclude (one per pipeline node).
 ROOT_CAUSES: tuple[str, ...] = (
+    "TCU_OFFLINE",
+    "ENTITLEMENT_CACHE_STALE",
+    "ELIGIBILITY_RULE_CONFLICT",
+    "PAYMENT_WEBHOOK_LOST",
+    "TOKEN_SCOPE",
+)
+
+#: RCs the rule-based backup generator can synthesize complaints for (full cue/opener data).
+#: The 2 newer classes are covered by Claude-hand-distilled data, not the template generator.
+GENERATABLE_RCS: tuple[str, ...] = (
     "TCU_OFFLINE",
     "ENTITLEMENT_CACHE_STALE",
     "ELIGIBILITY_RULE_CONFLICT",
@@ -105,6 +115,8 @@ RC_TO_RUNBOOK: dict[str, str] = {
     "ENTITLEMENT_CACHE_STALE": "RB-CACHE-02",
     "TCU_OFFLINE": "RB-TCU-04",
     "ELIGIBILITY_RULE_CONFLICT": "RB-ELIG-05",
+    "PAYMENT_WEBHOOK_LOST": "RB-PAY-01",
+    "TOKEN_SCOPE": "RB-IAM-03",
 }
 
 #: Short, stable group tag used for per-slice eval/holdout (mirrors schema ``Mode``).
@@ -112,6 +124,8 @@ RC_TO_SLICE: dict[str, str] = {
     "TCU_OFFLINE": "tcu_offline",
     "ENTITLEMENT_CACHE_STALE": "cache_stale",
     "ELIGIBILITY_RULE_CONFLICT": "eligibility",
+    "PAYMENT_WEBHOOK_LOST": "payment_webhook",
+    "TOKEN_SCOPE": "token_scope",
     ABSTAIN: "abstention",
 }
 
@@ -174,14 +188,45 @@ CUE_LIBRARY: dict[str, dict[str, Any]] = {
             "intermittent, does not self-resolve."
         ),
     },
+    "PAYMENT_WEBHOOK_LOST": {
+        "one_line": (
+            "Payment went through, but the payment-to-entitlement event did not complete, so the "
+            "entitlement was never created."
+        ),
+        "cues": [
+            "the purchase is very recent (minutes or hours ago)",
+            "paid this morning and it still has not switched on",
+            "the charge shows pending or processing",
+            "charged but nothing activated yet, often self-resolves shortly",
+        ],
+        "distinguishing_from": (
+            "ELIGIBILITY_RULE_CONFLICT: eligibility is a persistent rule rejection that does not "
+            "self-resolve; a lost/delayed activation is tied to a very recent purchase and often "
+            "settles on its own or after a replay."
+        ),
+    },
+    "TOKEN_SCOPE": {
+        "one_line": (
+            "The entitlement exists, but the IAM token/scope was not refreshed, so the feature "
+            "returns a 403 / permission error."
+        ),
+        "cues": [
+            "error 403 or permission denied when opening the feature",
+            "the app logs me out when I tap the feature",
+            "sign-in works otherwise but the feature is blocked",
+            "still blocked after signing out and back in",
+        ],
+        "distinguishing_from": (
+            "ENTITLEMENT_CACHE_STALE: a cache shows the feature missing/off; a token-scope issue "
+            "shows an explicit permission error (403) or logs the user out on the feature."
+        ),
+    },
 }
 
 #: Out-of-catalog cues → abstention (NOT a concrete RC). Token 403, billing, app crash, OTA.
 OUT_OF_CATALOG_CUES: list[str] = [
-    "I keep getting a 403 error",
-    "the app logs me out constantly",
-    "it says access permission denied",
     "I want a refund / I am disputing the charge",
+    "I think I was double charged and want my money back",
     "the app crashes on launch",
     "there is a software/OTA update stuck",
 ]
@@ -701,6 +746,84 @@ RUNBOOKS: dict[str, dict[str, Any]] = {
         "similar_incident": "INC-0501",
         "last_reviewed": "2026-06",
     },
+    "PAYMENT_WEBHOOK_LOST": {
+        "runbook_id": "RB-PAY-01",
+        "rc_class": "PAYMENT_WEBHOOK_LOST",
+        "title": "Payment Succeeded but Activation Event Lost",
+        "one_line": "Payment went through, but the payment-to-entitlement event did not complete, so the entitlement was never created.",
+        "summary": "The customer paid successfully, but the event that should create the entitlement did not complete, so the feature was never switched on. Recent purchases often settle on their own; older ones need the activation to be replayed.",
+        "why_plain": "Your payment went through fine, but the step that turns on your feature did not finish. If you just purchased it, it often completes on its own shortly; otherwise we will re-run the activation for you.",
+        "why_technical": "payment is captured, but the payment-to-entitlement event did not complete (delayed or dropped), so no entitlement record was created and nothing propagates downstream.",
+        "owner_team": "DSD Payments Team",
+        "support_contact": "DSD Payments on-call (Slack #pay-oncall)",
+        "escalation": "DSD L2; DSD L3 if the activation must be replayed manually at scale",
+        "detection_cues": [
+            "the purchase is very recent (minutes or hours ago)",
+            "paid this morning and the feature still has not switched on",
+            "the charge shows pending or processing",
+            "charged but nothing activated, often self-resolves shortly",
+        ],
+        "confirm_checks": [
+            "The payment was captured for the order",
+            "Whether an entitlement record was created",
+            "Whether the activation event is still in retry",
+        ],
+        "fix_steps": [
+            "Confirm the payment was captured",
+            "Check whether the activation event is delayed or dropped",
+            "Wait for auto-retry if the purchase is very recent",
+            "Replay the payment-to-entitlement event",
+            "Verify the entitlement is created and the app shows the feature",
+        ],
+        "eta_ttr": "Often self-resolves within the hour for very recent purchases; otherwise ~1 hour to replay the activation",
+        "severity": "S3",
+        "priority": "P2",
+        "churn_risk": {"level": "low-medium", "why": "the customer has paid, but it often self-resolves quickly with good expectation-setting"},
+        "compensation_policy": {"offer": "goodwill gesture only if it stays unresolved beyond a day", "when_proactive": False, "escalate_if": ">1 day -> 1-month credit", "note": "usually guidance only; reassure that the payment is fine"},
+        "customer_communication": "Reassure the customer the payment went through correctly; explain the activation just needs to complete; give a concrete expectation (often within the hour, otherwise we replay it); never ask them to repurchase.",
+        "customer_action": "Your payment is fine — please give it a little time; if it does not switch on shortly, we will re-run the activation for you.",
+        "similar_incident": "INC-0815",
+        "last_reviewed": "2026-06",
+    },
+    "TOKEN_SCOPE": {
+        "runbook_id": "RB-IAM-03",
+        "rc_class": "TOKEN_SCOPE",
+        "title": "IAM Token / Scope Not Refreshed",
+        "one_line": "The entitlement exists, but the IAM token/scope was not refreshed, so the feature returns a 403.",
+        "summary": "The subscription is active, but the customer's access token does not yet carry the scope for the feature, so tapping it returns a permission error. Refreshing the token or re-authenticating restores access.",
+        "why_plain": "You do have the subscription, but your sign-in session did not pick up the new permission yet, so the app blocks the feature. Signing out and back in usually refreshes it.",
+        "why_technical": "the entitlement is active, but the IAM/HIDAS token was issued without the entitlement's scope (stale or expired), so the feature endpoint returns 403 until the token/scope is refreshed.",
+        "owner_team": "HG Identity Team",
+        "support_contact": "HG Identity on-call (Slack #iam-oncall)",
+        "escalation": "HG L2 if the entitlement-to-scope mapping is wrong (needs a reissue)",
+        "detection_cues": [
+            "error 403 or permission denied when opening the feature",
+            "the app logs the customer out when they tap the feature",
+            "sign-in works otherwise but the feature is blocked",
+            "still blocked after signing out and back in",
+        ],
+        "confirm_checks": [
+            "The entitlement is active for the account",
+            "Whether the access token carries the feature scope",
+            "Whether the token is expired",
+        ],
+        "fix_steps": [
+            "Confirm the entitlement is active for the account",
+            "Check whether the token carries the feature scope",
+            "Force a token/scope refresh (re-authenticate)",
+            "If the scope mapping is wrong, fix it and reissue the token",
+            "Verify the feature no longer returns 403",
+        ],
+        "eta_ttr": "Under 1 hour; immediate after a token refresh in most cases",
+        "severity": "S3",
+        "priority": "P2",
+        "churn_risk": {"level": "low-medium", "why": "a permission error feels broken, but the fix is fast once the token is refreshed"},
+        "compensation_policy": {"offer": "small goodwill gesture only if it recurs", "when_proactive": False, "escalate_if": "recurring -> investigate the scope mapping", "note": "usually none; not offered proactively"},
+        "customer_communication": "Reassure the customer they do have access; explain it is a sign-in/permission refresh, not a lost subscription; guide them through a re-login; do not imply they did anything wrong.",
+        "customer_action": "Please sign out and back in to refresh your permissions; if the feature still shows a permission error, we will refresh it on our side.",
+        "similar_incident": "INC-0923",
+        "last_reviewed": "2026-06",
+    },
 }
 
 #: Severity may shift for combo/region-wide eligibility or TCU hardware faults — documented note.
@@ -708,7 +831,78 @@ SEVERITY_NOTES: dict[str, str] = {
     "TCU_OFFLINE": "S4 (S3 if a hardware fault)",
     "ELIGIBILITY_RULE_CONFLICT": "S3 (S2 if combo/region-wide)",
     "ENTITLEMENT_CACHE_STALE": "S3",
+    "PAYMENT_WEBHOOK_LOST": "S3 (S2 if many orders affected)",
+    "TOKEN_SCOPE": "S3 (S2 if a scope-mapping bug)",
 }
+
+# ---------------------------------------------------------------------------
+# Sub-causes (failure modes) per RC class. The class is the cue-classification target;
+# the sub_cause is the specific failure inside it. owner/support/escalation/runbook_id stay per
+# class (fidelity-locked); why_technical / fix_steps / severity / eta_ttr vary by sub_cause.
+# ``escalate_note`` tailors the customer ladder's final (escalation) rung to the sub_cause.
+# ---------------------------------------------------------------------------
+SUB_CAUSES: dict[str, dict[str, dict[str, Any]]] = {
+    "TCU_OFFLINE": {
+        "no_signal_garage": {"why_technical": "the TCU is in an underground/garage area with no cellular, so the push was never delivered.", "fix_steps": ["Confirm the entitlement is active", "Ask the customer to move the vehicle to open sky", "Re-push the entitlement", "Verify the TCU acknowledges"], "severity": "S4", "eta_ttr": "Under 15 minutes once the vehicle is back in signal", "escalate_note": "if it still fails after the car has clear signal, contact support — we will check the vehicle side."},
+        "weak_signal_remote": {"why_technical": "the TCU is in a weak-coverage (rural) area, so the push intermittently fails to deliver.", "fix_steps": ["Confirm the entitlement is active", "Ask the customer to retry from a better-coverage area", "Re-push the entitlement", "Verify delivery"], "severity": "S4", "eta_ttr": "Under 15 minutes from a good-coverage location", "escalate_note": "if better coverage still does not help, contact support to check the vehicle side."},
+        "tcu_asleep": {"why_technical": "the TCU entered low-power sleep after a long idle period, so it is not listening for the push.", "fix_steps": ["Confirm the entitlement is active", "Ask the customer to start the engine / drive briefly to wake the TCU", "Re-push the entitlement", "Verify acknowledgement"], "severity": "S4", "eta_ttr": "Under 15 minutes after the vehicle is woken", "escalate_note": "if waking the car does not help, contact support for a vehicle-side check."},
+        "tcu_firmware_hang": {"why_technical": "the TCU is online but its telematics stack has hung, so it does not process the push despite good signal.", "fix_steps": ["Confirm the entitlement is active", "Ask the customer to fully power-cycle the vehicle", "Re-push the entitlement", "Verify acknowledgement"], "severity": "S3", "eta_ttr": "About 30 minutes; immediate after a successful power-cycle", "escalate_note": "if a power-cycle with good signal still fails, contact support — this needs a vehicle-side reset."},
+        "tcu_hardware_fault": {"why_technical": "the TCU appears faulty: it does not connect even with confirmed good signal over an extended period.", "fix_steps": ["Confirm the entitlement is active", "Confirm the vehicle has had good signal repeatedly", "Open a hardware-fault investigation", "Initiate the RMA path if confirmed"], "severity": "S3", "eta_ttr": "RMA path of several days if a hardware fault is confirmed", "escalate_note": "since it persists with good signal for days, contact support for a hardware check / RMA — no further self-service will help."},
+        "low_12v_battery": {"why_technical": "a low 12V battery (long idle) is starving the TCU, so it cannot stay connected.", "fix_steps": ["Confirm the entitlement is active", "Ask the customer to charge/replace the 12V battery", "Re-push the entitlement once the battery is healthy", "Verify"], "severity": "S4", "eta_ttr": "Once the 12V battery is charged (hours)", "escalate_note": "if charging the battery does not restore it, contact support for a vehicle-side check."},
+        "carrier_outage": {"why_technical": "a regional cellular outage is preventing the push from reaching the TCU.", "fix_steps": ["Confirm the entitlement is active", "Check for a known carrier outage in the area", "Wait for the carrier to recover, then re-push", "Verify"], "severity": "S3", "eta_ttr": "Depends on carrier recovery", "escalate_note": "if a wider outage is suspected, contact support; this is network-side and will recover."},
+    },
+    "ENTITLEMENT_CACHE_STALE": {
+        "app_client_cache": {"why_technical": "the phone app holds a stale local cache, so it renders the feature as off.", "fix_steps": ["Confirm the entitlement is active for the VIN", "Ask the customer to refresh / re-login / reinstall", "Verify the app shows the feature"], "severity": "S3", "eta_ttr": "Minutes; immediate after a re-login/reinstall", "escalate_note": "if a reinstall and re-login still do not help, contact support to refresh it server-side."},
+        "ccs_server_cache_ttl": {"why_technical": "the CCS server cache TTL has not expired, so it keeps serving a stale view despite a fresh client.", "fix_steps": ["Confirm the entitlement is active", "Force a server cache invalidation", "Re-sync to CCS", "Verify"], "severity": "S3", "eta_ttr": "Under 30 minutes; immediate after invalidation", "escalate_note": "if it persists after a reinstall, contact support — we will force a server-side cache refresh."},
+        "cdn_edge_cache": {"why_technical": "an edge/CDN node is serving a stale cached response in the customer's region.", "fix_steps": ["Confirm the entitlement is active", "Purge the edge cache for the entitlement", "Verify across devices/regions"], "severity": "S3", "eta_ttr": "Under 30 minutes after an edge purge", "escalate_note": "if some devices/regions work and others do not, contact support to purge the edge cache."},
+        "multi_device_sync_lag": {"why_technical": "one device holds a stale view while others are correct — a per-device sync lag.", "fix_steps": ["Confirm the entitlement is active", "Refresh the lagging device", "Verify it matches the others"], "severity": "S4", "eta_ttr": "Minutes after refreshing the lagging device", "escalate_note": "if the one device still lags after a refresh, contact support."},
+        "invalidation_missed": {"why_technical": "a plan change did not trigger a cache invalidation, so the old view persists.", "fix_steps": ["Confirm the new entitlement is active", "Manually invalidate the cache for the change", "Re-sync", "Verify"], "severity": "S3", "eta_ttr": "Under 30 minutes after a manual invalidation", "escalate_note": "if the app did not update after a plan change, contact support to invalidate the cache."},
+    },
+    "ELIGIBILITY_RULE_CONFLICT": {
+        "region_not_in_matrix": {"why_technical": "the customer's region is missing from the eligibility matrix, so the combo was rejected and no entitlement created.", "fix_steps": ["Fetch the eligibility decision for the VIN", "Confirm the region was wrongly excluded", "Add the region to the matrix", "Replay entitlement creation", "Verify"], "severity": "S3", "eta_ttr": "2-3 hours for a matrix change plus replay", "escalate_note": "do not repay — this is a region rule on our side; we will fix it and apply a credit."},
+        "trim_not_in_matrix": {"why_technical": "the vehicle trim is missing from the eligibility matrix, so the combo was rejected.", "fix_steps": ["Fetch the eligibility decision", "Confirm the trim was wrongly excluded", "Add the trim to the matrix", "Replay entitlement creation", "Verify"], "severity": "S3", "eta_ttr": "2-3 hours for a matrix change plus replay", "escalate_note": "do not repay — this is a trim rule on our side; we will fix it and apply a credit."},
+        "plan_tier_not_enabled": {"why_technical": "the plan tier is not enabled for this combo in the matrix, so activation was blocked.", "fix_steps": ["Fetch the eligibility decision", "Confirm the plan tier should be enabled", "Enable the plan tier for the combo", "Replay entitlement creation", "Verify"], "severity": "S3", "eta_ttr": "2-3 hours for a config change plus replay", "escalate_note": "do not repay — we will enable your plan for this combo and apply a credit."},
+        "matrix_stale_new_model_year": {"why_technical": "a newly launched model year is not yet in the eligibility matrix, so eligible customers are wrongly rejected.", "fix_steps": ["Fetch the eligibility decision", "Confirm the new model year is missing", "Update the matrix for the new model year", "Replay entitlement creation", "Verify and audit same-combo customers"], "severity": "S2", "eta_ttr": "Up to one business day; affects multiple customers", "escalate_note": "do not repay — your model year just needs adding on our side; we will fix it and apply a credit."},
+        "rule_misconfig_bug": {"why_technical": "the eligibility rule logic is misconfigured and wrongly rejects a valid combo; a code fix is required.", "fix_steps": ["Fetch the eligibility decision", "Confirm the rule wrongly rejects a valid combo", "Open an engineering fix for the rule", "Deploy and replay entitlement creation", "Verify and audit affected customers"], "severity": "S2", "eta_ttr": "Up to one business day if a code deploy is required", "escalate_note": "do not repay — this is a rule bug on our side; engineering will fix it and we will apply a credit."},
+        "promo_bundle_edge": {"why_technical": "a promo/bundle purchase hit an eligibility edge case, so the entitlement was not created.", "fix_steps": ["Fetch the eligibility decision", "Confirm the promo/bundle should grant the feature", "Manually grant the entitlement", "Verify"], "severity": "S3", "eta_ttr": "2-3 hours for a manual grant", "escalate_note": "do not repay — your promo/bundle should include this; we will grant it and apply a credit if relevant."},
+    },
+    "PAYMENT_WEBHOOK_LOST": {
+        "webhook_delayed": {"why_technical": "the payment-to-entitlement event is delayed in retry for a very recent purchase; it usually settles on its own.", "fix_steps": ["Confirm the payment was captured", "Confirm the activation event is still in retry", "Allow auto-retry to settle", "Verify the entitlement is created"], "severity": "S4", "eta_ttr": "Often within the hour on its own", "escalate_note": "your payment is fine — give it a little time; if it does not switch on shortly, contact support to replay it."},
+        "webhook_dropped": {"why_technical": "the payment-to-entitlement event was dropped (not just delayed), so the entitlement was never created.", "fix_steps": ["Confirm the payment was captured", "Confirm no entitlement was created", "Replay the payment-to-entitlement event", "Verify"], "severity": "S3", "eta_ttr": "About 1 hour to replay the activation", "escalate_note": "your payment is fine and you should not repay — contact support to replay the activation."},
+        "payment_pending_review": {"why_technical": "the payment is pending/under review, so it has not settled and the activation has not started.", "fix_steps": ["Check the payment status", "Wait for settlement or manually release the hold", "Trigger entitlement creation once settled", "Verify"], "severity": "S3", "eta_ttr": "Hours, depending on settlement", "escalate_note": "your payment is still settling — please wait; contact support if it stays pending."},
+        "duplicate_charge_no_grant": {"why_technical": "the customer was charged (possibly twice) but no entitlement was granted due to the failed activation.", "fix_steps": ["Confirm the charge(s)", "De-duplicate the charge", "Grant the entitlement", "Refund any duplicate", "Verify"], "severity": "S3", "eta_ttr": "About 1 hour, plus refund timing for any duplicate", "escalate_note": "do not repay — contact support; we will grant your feature and refund any duplicate charge."},
+        "partial_provision": {"why_technical": "the order was created but the entitlement step did not finish, leaving a partial provision.", "fix_steps": ["Confirm the order exists", "Confirm the entitlement step did not complete", "Re-run entitlement creation", "Verify"], "severity": "S3", "eta_ttr": "About 1 hour to re-run the entitlement step", "escalate_note": "your order is there — contact support to finish the activation; no need to repay."},
+    },
+    "TOKEN_SCOPE": {
+        "stale_scope": {"why_technical": "the token was issued before the entitlement, so it lacks the feature scope until refreshed.", "fix_steps": ["Confirm the entitlement is active", "Confirm the token lacks the feature scope", "Force a token/scope refresh", "Verify the 403 clears"], "severity": "S3", "eta_ttr": "Under 1 hour; immediate after a refresh", "escalate_note": "if signing out and back in does not clear the permission error, contact support to refresh your access."},
+        "token_expired": {"why_technical": "the session token has expired and the app is not refreshing it, so the feature endpoint returns 403.", "fix_steps": ["Confirm the entitlement is active", "Confirm the token is expired", "Re-authenticate / clear the session", "Verify"], "severity": "S3", "eta_ttr": "Under 1 hour; immediate after re-auth", "escalate_note": "if a fresh sign-in does not help, contact support to reset your session."},
+        "scope_mapping_bug": {"why_technical": "the entitlement-to-scope mapping is wrong, so even a refreshed token lacks the scope; needs a fix and reissue.", "fix_steps": ["Confirm the entitlement is active", "Confirm the scope mapping is wrong", "Fix the entitlement-to-scope mapping", "Reissue the token", "Verify"], "severity": "S2", "eta_ttr": "Hours; needs a mapping fix and reissue", "escalate_note": "since it persists after re-login, contact support — we will fix the permission mapping on our side."},
+        "multi_account_mismatch": {"why_technical": "the feature is on one account but the customer is signed into another, so the active session lacks the scope.", "fix_steps": ["Identify which account holds the entitlement", "Ask the customer to sign into the correct account (or link accounts)", "Verify access"], "severity": "S3", "eta_ttr": "Under 1 hour", "escalate_note": "check you are signed into the account that bought the feature; contact support to link your accounts if needed."},
+    },
+}
+
+
+def sub_causes_for(rc_class: str) -> tuple[str, ...]:
+    """Valid sub_cause keys for an RC class (empty tuple for abstention/unknown)."""
+    return tuple(SUB_CAUSES.get(rc_class, {}).keys())
+
+
+def resolve_sub_cause(rc_class: str, sub_cause: str | None) -> dict[str, Any]:
+    """Return the per-sub-cause overrides (why_technical/fix_steps/severity/eta_ttr/escalate_note).
+
+    Falls back to the base runbook values when ``sub_cause`` is None or unknown.
+    """
+    rb = RUNBOOKS.get(rc_class, {})
+    base = {
+        "why_technical": rb.get("why_technical", ""),
+        "fix_steps": rb.get("fix_steps", []),
+        "severity": rb.get("severity", ""),
+        "eta_ttr": rb.get("eta_ttr", ""),
+        "escalate_note": None,
+    }
+    if sub_cause and sub_cause in SUB_CAUSES.get(rc_class, {}):
+        base.update(SUB_CAUSES[rc_class][sub_cause])
+    return base
 
 
 def runbook_for(rc_class: str) -> dict[str, Any]:
@@ -775,6 +969,150 @@ def render_runbook(rc_class: str) -> str:
             f"**Customer communication.** {rb['customer_communication']}",
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Customer self-service ladder (§3.2 customer_self_service) — a step-by-step
+# troubleshooting protocol the customer can follow while support works the ticket.
+# Easy → hard; early rungs RULE OUT other causes (self-triage), later rungs RESOLVE
+# the leading cause, last rung ESCALATES. Customer-safe actions only (never internal
+# ops like DEL ent:{vin}); no fabricated telemetry; no over-promise.
+# ---------------------------------------------------------------------------
+
+#: Ordered protocols per leading RC. Each step: tier, action, addresses (which hypothesis the step
+#: tests/fixes), expected_time, verify (how the customer knows it worked), if_fails.
+_SELF_SERVICE: dict[str, list[dict[str, str]]] = {
+    "TCU_OFFLINE": [
+        {"action": "Open the app, pull down to refresh, then sign out and sign back in. This clears a stale display if that is all it is.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~2 min",
+         "verify": "the feature now appears and works"},
+        {"action": "Check that the subscription still shows Active in the app or your online account, so we know this is a connectivity issue and not a billing one.",
+         "addresses": "general", "expected_time": "~1 min",
+         "verify": "the subscription shows Active"},
+        {"action": "Drive or move the vehicle out of the garage/basement into open air with a clear view of the sky, where it can pick up cellular signal.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~5 min",
+         "verify": "the car is outdoors with signal"},
+        {"action": "With the engine running in open air, wait 3-5 minutes for the car to reconnect, then open the app and retry the remote command.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~5 min",
+         "verify": "the remote command now succeeds"},
+        {"action": "If it still spins, lock and unlock the car once with the physical key fob, then retry the remote command in the app to nudge the car to check in.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~3 min",
+         "verify": "the command goes through"},
+        {"action": "If it is still failing after the car has had signal for about 15 minutes, fully power the vehicle off, wait a minute, restart it, and try once more.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~20 min",
+         "verify": "the feature responds"},
+        {"action": "If none of these work, the problem is not signal-related. Contact support; we will check for a hardware fault and resolve it.",
+         "addresses": "escalate", "expected_time": "handled by support",
+         "verify": "a specialist takes over"},
+    ],
+    "ENTITLEMENT_CACHE_STALE": [
+        {"action": "In the app, pull down to refresh, then sign out and sign back in. This forces the app to re-read your current entitlements and usually restores the feature immediately.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~2 min",
+         "verify": "the feature appears and works"},
+        {"action": "If it flickers back then disappears, fully close the app (swipe it away) and reopen it, rather than just minimizing it.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~2 min",
+         "verify": "the feature stays visible"},
+        {"action": "Reinstall the app from the store, then sign in again. This clears cached data stored on the phone.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~5 min",
+         "verify": "the feature now shows after re-login"},
+        {"action": "Open the app once while the car is in an area with good signal and the engine is on, so a fresh sync can reach the vehicle too.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~5 min",
+         "verify": "the feature works end to end"},
+        {"action": "Check the website/account. If the feature shows Active there but not in the app after the steps above, note that — it confirms a sync issue on our side.",
+         "addresses": "general", "expected_time": "~2 min",
+         "verify": "you can see the web vs app mismatch"},
+        {"action": "If it still will not show after a reinstall and re-login, contact support — we will force a cache refresh on our side; it is quick.",
+         "addresses": "escalate", "expected_time": "handled by support",
+         "verify": "a specialist forces the refresh"},
+    ],
+    "ELIGIBILITY_RULE_CONFLICT": [
+        {"action": "First, pull to refresh and sign out and back in, on the off chance it is only a display delay.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~2 min",
+         "verify": "the feature appears (rules out a cache issue)"},
+        {"action": "Force-close and reopen the app, or reinstall it, then sign in again.",
+         "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~5 min",
+         "verify": "still prompts to subscribe (rules out the app/cache)"},
+        {"action": "Make sure your car has had cellular signal recently (not parked underground) and retry.",
+         "addresses": "TCU_OFFLINE", "expected_time": "~5 min",
+         "verify": "still prompts to subscribe (rules out signal)"},
+        {"action": "Have your payment confirmation or receipt handy. Your payment is not the problem, but it helps us locate the order quickly.",
+         "addresses": "general", "expected_time": "~2 min",
+         "verify": "you have the order reference ready"},
+        {"action": "If it still keeps asking you to subscribe, please do NOT pay again — this is an activation rule on our side for your specific vehicle/plan. Contact support; we will fix it and apply a service credit.",
+         "addresses": "escalate", "expected_time": "handled by support (2-3h)",
+         "verify": "a specialist updates the rule and credits the account"},
+    ],
+}
+
+_SELF_SERVICE["PAYMENT_WEBHOOK_LOST"] = [
+    {"action": "In the app, pull down to refresh and sign out and back in, in case it just needs to re-read your purchase.",
+     "addresses": "ENTITLEMENT_CACHE_STALE", "expected_time": "~2 min", "verify": "the feature appears"},
+    {"action": "Check your order/receipt is showing in the app or your account, so you have the order reference.",
+     "addresses": "general", "expected_time": "~2 min", "verify": "you can see the order"},
+    {"action": "If you bought it very recently, give it a little time — activation often completes on its own within the hour; retry after a while.",
+     "addresses": "PAYMENT_WEBHOOK_LOST", "expected_time": "~30-60 min", "verify": "the feature switches on"},
+    {"action": "Make sure your car has had signal (not parked underground) so a completed activation can reach it, then retry.",
+     "addresses": "TCU_OFFLINE", "expected_time": "~5 min", "verify": "the feature works end to end"},
+    {"action": "If it still has not switched on, do NOT repurchase — contact support; your payment is fine and we will replay the activation.",
+     "addresses": "escalate", "expected_time": "handled by support (~1h)", "verify": "a specialist replays the activation"},
+]
+
+_SELF_SERVICE["TOKEN_SCOPE"] = [
+    {"action": "Sign out of the app and sign back in — this refreshes your permissions and usually clears the error.",
+     "addresses": "TOKEN_SCOPE", "expected_time": "~2 min", "verify": "the permission error clears"},
+    {"action": "Force-close and reopen the app; if needed, reinstall it and sign in again.",
+     "addresses": "TOKEN_SCOPE", "expected_time": "~5 min", "verify": "the feature opens"},
+    {"action": "Make sure you are signed into the same account that purchased the feature (check the email on the account).",
+     "addresses": "TOKEN_SCOPE", "expected_time": "~2 min", "verify": "you are on the correct account"},
+    {"action": "Note the exact error (e.g. a 403 or permission message) so support can pinpoint it.",
+     "addresses": "general", "expected_time": "~1 min", "verify": "you have the error details"},
+    {"action": "If it still shows a permission error, contact support — we will refresh your access on our side.",
+     "addresses": "escalate", "expected_time": "handled by support (<1h)", "verify": "a specialist refreshes your access"},
+]
+
+#: Generic safe ladder for abstention (root cause unknown — do not assume any single cause).
+_SELF_SERVICE_GENERIC: list[dict[str, str]] = [
+    {"action": "Pull to refresh and sign out and back in in the app.",
+     "addresses": "general", "expected_time": "~2 min", "verify": "the feature appears"},
+    {"action": "Force-close and reopen the app; if needed, reinstall it and sign in again.",
+     "addresses": "general", "expected_time": "~5 min", "verify": "the feature appears"},
+    {"action": "Make sure the car has cellular signal (move it to open air if it has been parked underground) and retry.",
+     "addresses": "general", "expected_time": "~5 min", "verify": "the feature responds"},
+    {"action": "Note any error message or code you see, and whether the feature shows active on the website.",
+     "addresses": "general", "expected_time": "~2 min", "verify": "you have details to share"},
+    {"action": "If none of this helps, a specialist will look into it and may need a few details to pin down the cause.",
+     "addresses": "escalate", "expected_time": "handled by support", "verify": "a specialist triages it"},
+]
+
+
+def customer_self_service_ladder(
+    leading_rc: str, sub_cause: str | None = None
+) -> list[dict[str, Any]]:
+    """Return the ordered, step-by-step customer self-service protocol for a leading RC.
+
+    Easy → hard: early rungs rule out other causes (self-triage), middle rungs resolve the leading
+    cause, the last rung escalates. For an unknown/abstention RC, return the generic safe ladder.
+    When ``sub_cause`` is given, the final (escalation) rung's action is tailored to it (e.g. a
+    hardware fault routes to an RMA check rather than the generic hand-off). Each rung carries
+    ``tier``, ``action``, ``addresses``, ``expected_time``, ``verify``, ``if_fails``.
+    """
+    steps = _SELF_SERVICE.get(leading_rc, _SELF_SERVICE_GENERIC)
+    note = resolve_sub_cause(leading_rc, sub_cause).get("escalate_note") if sub_cause else None
+    out: list[dict[str, Any]] = []
+    for i, s in enumerate(steps, start=1):
+        last = i == len(steps)
+        action = s["action"]
+        if last and note:  # tailor the escalation rung to the specific failure mode
+            action = note[0].upper() + note[1:]
+        out.append({
+            "tier": i,
+            "action": action,
+            "addresses": s["addresses"],
+            "expected_time": s["expected_time"],
+            "verify": s["verify"],
+            "if_fails": (f"go to step {i + 1}" if not last else "a specialist takes over"),
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------

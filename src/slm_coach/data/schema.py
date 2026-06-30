@@ -49,6 +49,8 @@ class Mode(str, Enum):
     tcu_offline = "tcu_offline"  # RC-4 TCU offline
     cache_stale = "cache_stale"  # RC-2 entitlement cache stale
     eligibility = "eligibility"  # RC-5 eligibility rule conflict
+    payment_webhook = "payment_webhook"  # RC-1 payment→entitlement webhook lost (HONDA_PAY)
+    token_scope = "token_scope"  # RC-3 IAM token/scope 403 (IAM_HIDAS)
     abstention = "abstention"  # INSUFFICIENT_EVIDENCE (ambiguous / out-of-catalog)
     knowledge = "knowledge"  # runbook-field Q&A augmentation (§5.2)
     differential = "differential"  # differential reasoning traces (§5.3)

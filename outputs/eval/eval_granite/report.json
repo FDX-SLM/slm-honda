@@ -1,0 +1,85 @@
+{
+  "n": 180,
+  "rc_accuracy": 0.8722222222222222,
+  "rc_accuracy_clear": 0.86,
+  "cue_faithfulness": 0.9930555555555556,
+  "no_fabrication_rate": 1.0,
+  "runbook_completeness": 1.0,
+  "runbook_fidelity": 1.0,
+  "artifact_valid_at_1": 1.0,
+  "self_service_present_rate": 1.0,
+  "abstention_hallucination": 0.06666666666666667,
+  "ece": 0.20061111111111113,
+  "overconfident_wrong_rate": 0.0,
+  "parse_fail_rate": 0.0,
+  "per_slice_accuracy": {
+    "abstention": 0.9333333333333333,
+    "cache_stale": 1.0,
+    "eligibility": 0.36666666666666664,
+    "payment_webhook": 0.9666666666666667,
+    "tcu_offline": 0.9666666666666667,
+    "token_scope": 1.0
+  },
+  "confusion": {
+    "TCU_OFFLINE": {
+      "TCU_OFFLINE": 29,
+      "ENTITLEMENT_CACHE_STALE": 1,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "ENTITLEMENT_CACHE_STALE": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 30,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "ELIGIBILITY_RULE_CONFLICT": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 1,
+      "ELIGIBILITY_RULE_CONFLICT": 11,
+      "PAYMENT_WEBHOOK_LOST": 18,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "PAYMENT_WEBHOOK_LOST": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 1,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 29,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "TOKEN_SCOPE": {
+      "TCU_OFFLINE": 0,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 30,
+      "INSUFFICIENT_EVIDENCE": 0,
+      "PARSE_FAIL": 0
+    },
+    "INSUFFICIENT_EVIDENCE": {
+      "TCU_OFFLINE": 2,
+      "ENTITLEMENT_CACHE_STALE": 0,
+      "ELIGIBILITY_RULE_CONFLICT": 0,
+      "PAYMENT_WEBHOOK_LOST": 0,
+      "TOKEN_SCOPE": 0,
+      "INSUFFICIENT_EVIDENCE": 28,
+      "PARSE_FAIL": 0
+    }
+  },
+  "latency": null,
+  "extras": {
+    "model": "checkpoints/sft_granite/best",
+    "gold": "data/gold/gold_test.jsonl",
+    "mock": false
+  }
+}

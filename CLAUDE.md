@@ -42,8 +42,8 @@ Subscribe / region-trim-plan combo) · `INSUFFICIENT_EVIDENCE` (abstain: no cue 
 - `set_seed` at every entrypoint. GPU code degrades to dry-run/mock without a GPU.
 
 ## The 4 base models (model-agnostic, §6.1)
-`Qwen/Qwen3.5-9B` (qwen) · `google/gemma-4-12b-it` (gemma) · `microsoft/phi-4` (phi) ·
-`ibm-granite/granite-4.1-8b-instruct` (granite). No Mistral. Verify HF ids before downloading.
+`Qwen/Qwen3.5-9B` (qwen) · `google/gemma-4-12B-it` (gemma) · `microsoft/phi-4` (phi) ·
+`ibm-granite/granite-4.1-8b` (granite). No Mistral. Verify HF ids before downloading.
 
 ## Definition of done
 `uv sync` clean, `uv run pytest` green, every CLI has `--help` and runs in dry-run/mock without

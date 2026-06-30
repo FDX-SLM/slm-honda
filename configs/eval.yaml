@@ -9,14 +9,16 @@ seed: 999                          # eval seed differs from train (held-out)
 
 # Offline batch-generation decoding (closed-book; targets <1.5s/gen).
 generation:
-  max_new_tokens: 640
+  max_new_tokens: 1700             # assistant turn p99≈1494, max 1529; 1700 leaves headroom to close JSON
   temperature: 0.2                 # near-greedy for a stable structured JSON package
   top_p: 0.9
-  batch_size: 8
+  batch_size: 32                   # KV cache ∝ batch×seq×layers; 32 is safe for the heavy bases
+                                   # (gemma-12B/262K-vocab OOMs at 96 generating 1700 tokens).
+                                   # Pair with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True.
 
 # Offline generation latency (p50/p95 of model.generate), NOT a serving benchmark. Target <1.5s.
 latency:
-  measure: true
+  measure: false                   # off for fast iteration (timing only, not a quality signal); re-enable for final
   n_samples: 50
 
 # The system prompt is left null so eval uses the canonical ground_truth.SYSTEM_PROMPT (Appendix A) —

@@ -1,13 +1,54 @@
-# máy GPU: cài deps một lần
-uv sync --extra train --extra gpu --extra viz
+# ============================================================================
+#  QUY TRÌNH CHẠY — Honda Entitlement Resolver (SFT → DPO → eval → leaderboard)
+#  Base: qwen | gemma | phi | granite  (đổi --base, 1 config dùng chung)
+#  Checkpoint: checkpoints/sft_<base>/best  ·  checkpoints/dpo_<base>/best
+# ============================================================================
 
-# SFT (data đọc tự động từ data/sft + data/gold)
-uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen
+# ── 0. Cài deps (1 lần / máy) ───────────────────────────────────────────────
+#  thêm 'tracking' để bật Langfuse (eval đẩy mẫu lên Langfuse; key đặt trong .env)
+uv sync --extra train --extra gpu --extra viz --extra tracking
 
-# DPO (sau SFT)
+# ── 1. Sinh + kiểm tra + chia holdout (data/ gitignored → PHẢI gen lại trên máy mới) ──
+uv run python scripts/gen_sft.py   --seed 42  --out data/sft/train_sft.jsonl
+uv run python scripts/gen_dpo.py   --seed 42  --out data/preference/dpo_pairs.jsonl
+uv run python scripts/gen_eval.py  --seed 999 --out data/gold/gold_test.jsonl
+uv run python scripts/validate_data.py --data-dir data/
+#  holdout stratified, cố định, dùng chung cho cả 4 base (regen data thì chạy lại bước này)
+uv run python scripts/split_holdout.py --config configs/sft.yaml
+
+# ── 2. SFT (Phase 1) — eval_loss chọn best (eval_during_training đã tắt) ─────
+uv run python scripts/train_sft.py --config configs/sft.yaml --base qwen      # → checkpoints/sft_qwen/best
+uv run python scripts/train_sft.py --config configs/sft.yaml --base gemma     # → checkpoints/sft_gemma/best
+uv run python scripts/train_sft.py --config configs/sft.yaml --base phi       # → checkpoints/sft_phi/best
+uv run python scripts/train_sft.py --config configs/sft.yaml --base granite   # → checkpoints/sft_granite/best
+#  (mẹo: kiểm config trước khi chạy thật)  ... --base gemma --dry-run
+
+# ── 3. DPO (Phase 2) — bắt đầu từ checkpoint SFT cùng base ───────────────────
 uv run python scripts/train_align.py --config configs/dpo.yaml --base qwen \
-    --sft-checkpoint checkpoints/sft_qwen/best
+    --sft-checkpoint checkpoints/sft_qwen/best                                 # → checkpoints/dpo_qwen/best
+uv run python scripts/train_align.py --config configs/dpo.yaml --base gemma \
+    --sft-checkpoint checkpoints/sft_gemma/best                                # → checkpoints/dpo_gemma/best
+uv run python scripts/train_align.py --config configs/dpo.yaml --base phi \
+    --sft-checkpoint checkpoints/sft_phi/best                                  # → checkpoints/dpo_phi/best
+uv run python scripts/train_align.py --config configs/dpo.yaml --base granite \
+    --sft-checkpoint checkpoints/sft_granite/best                             # → checkpoints/dpo_granite/best
 
-# eval
-uv run python scripts/evaluate.py --config configs/eval.yaml \
-    --model checkpoints/sft_qwen/best --base qwen --run-name eval_sft_qwen
+# ── 4. Eval — full generation MỌI mẫu → Langfuse (trace 'eval_sample') + file ─
+#  outputs/eval/<run-name>/{report.md,report.json,per_sample.csv}
+#  chạy cho từng base: SFT + DPO, mỗi cái thêm bản --hard (20 ca khó, báo cáo riêng)
+for M in qwen gemma phi granite; do
+  uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/sft_qwen/best --base qwen --run-name eval_sft_qwen
+  uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/sft_$M/best --base $M --hard --run-name eval_hard_sft_$M
+  uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/dpo_$M/best --base $M --run-name eval_dpo_$M
+  uv run python scripts/evaluate.py --config configs/eval.yaml --model checkpoints/dpo_$M/best --base $M --hard --run-name eval_hard_dpo_$M
+done
+
+# ── 5. Bảng so sánh 4 base ──────────────────────────────────────────────────
+uv run python scripts/compare_models.py --eval-root outputs/eval --out outputs/eval/leaderboard.md
+
+# ── Ghi chú ─────────────────────────────────────────────────────────────────
+#  • So sánh fair: cùng data + cùng holdout + cùng eval set; chọn model theo
+#    eval_hard + slice abstention/distractor, KHÔNG theo train loss.
+#  • Qwen chậm nhất (linear-attn chạy torch fallback); muốn nhanh: cài
+#    flash-linear-attention + causal-conv1d (build trên Blackwell sm_120 có rủi ro).
+#  • Eval offline (không cần GPU) để thử pipeline:  ... --model any --mock

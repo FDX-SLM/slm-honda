@@ -19,11 +19,11 @@ from slm_coach.data.formatting import to_sft_dataset
 from slm_coach.data.loader import load_gold_cases, load_jsonl_records, load_records
 from slm_coach.tracking import init_tracking
 from slm_coach.training.callbacks import EvalDuringTraining, eval_metric_key, write_meta_json
+from slm_coach.training.masking import enable_assistant_masking
 from slm_coach.training.model import (
     precision_kwargs,
     prepare_peft_model,
     save_checkpoint,
-    supports_assistant_mask,
 )
 from slm_coach.utils.deps import require
 from slm_coach.utils.logging import get_logger
@@ -210,12 +210,14 @@ def run_sft_core(
     run_name = config.run_name + (f":{stage_name}" if stage_name else "")
     tracker = init_tracking(config, run_name=run_name)
 
-    # Multi-turn masking needs a chat template with generation markers; degrade gracefully.
+    # Train-on-responses-only needs generation markers. Inject a verified per-base patch when the
+    # stock template lacks them (mutates loaded.tokenizer.chat_template); degrade gracefully if no
+    # safe patch verifies (e.g. Gemma/Qwen strip <think> at render time).
     assistant_only = config.sft.multiturn_masking
-    if assistant_only and not supports_assistant_mask(loaded.tokenizer):
+    if assistant_only and not enable_assistant_masking(loaded.tokenizer):
         logger.warning(
-            "Chat template lacks generation markers; disabling assistant_only_loss "
-            "(multi-turn masking). Provide a template with {% generation %} to enable it."
+            "Could not enable assistant-only masking (no verified {% generation %} patch for this "
+            "base); disabling assistant_only_loss and training on the full sequence."
         )
         assistant_only = False
 
