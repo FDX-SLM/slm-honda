@@ -21,24 +21,24 @@ quant:
   load_in_4bit: false              # full bf16 LoRA (fits 14B on 1×96GB); flip to true for QLoRA 4-bit
 
 model:
-  max_seq_len: 2048               # full seq (sys+user+think+JSON+artifacts) p95≈1752, max 2711; 2048 covers 99.5%
+  max_seq_len: 2048               # complaint + <think> + JSON package fits in 2048
   attn_implementation: "sdpa"     # SDPA everywhere; set flash_attention_2 only if installed
   use_unsloth: false              # enable on Linux+CUDA if Unsloth supports the arch
   dtype: "bfloat16"
 
 sft:
-  epochs: 2
-  lr: 1.0e-4                     # LoRA range (1e-4..2e-4); full-FT would be 1e-5..2e-5
-  batch_size: 4
-  eval_batch_size: 8
-  grad_accum: 4                   # effective batch = 16
+  epochs: 3
+  lr: 2.0e-4                      # QLoRA range (full-FT would be 1e-5..2e-5)
+  batch_size: 8
+  eval_batch_size: 2
+  grad_accum: 2                   # effective batch = 16
   warmup_ratio: 0.03
   weight_decay: 0.01
   lr_scheduler_type: "cosine"
   max_grad_norm: 1.0
   optim: "adamw_torch"
   gradient_checkpointing: true
-  use_liger_kernel: true           # fused linear-CE: no full logits tensor → fixes large-vocab OOM (qwen)
+  use_liger_kernel: false
   max_seq_len: 2048
   train_on_responses_only: true   # loss only on the assistant turn (incl. the <think> block)
   multiturn_masking: true

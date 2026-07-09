@@ -12,7 +12,7 @@ from typing import Any
 
 from slm_coach.datagen.core import assistant_content, build_abstention, build_case
 from slm_coach.datagen.records import gold_record
-from slm_coach.ground_truth import ABSTAIN, RC_TO_SLICE, ROOT_CAUSES
+from slm_coach.ground_truth import ABSTAIN, GENERATABLE_RCS, RC_TO_SLICE
 
 
 def generate_eval(seed: int = 999, *, limit: int | None = None) -> list[dict[str, Any]]:

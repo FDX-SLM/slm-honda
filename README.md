@@ -111,8 +111,10 @@ uv run python scripts/compare_models.py --eval-root outputs/eval --out outputs/e
 ### 8 — Demo + RAG baseline (the money shot)
 ```bash
 uv run python scripts/rag_baseline.py --gold data/gold/gold_test.jsonl   # cue-blind foil (lower accuracy, can't abstain)
-HONDA_ADAPTER=checkpoints/dpo_qwen/best uv run streamlit run app.py       # split-screen SLM vs RAG
+HONDA_ADAPTER=checkpoints/dpo_qwen/best uv run streamlit run app.py       # 2 tab: Customer ticket + SLM vs RAG
 ```
+The demo (closed-book, **no tools**) has two tabs: **🎫 Customer ticket** (khách tạo ticket → SLM →
+phần trả khách vs phần nội bộ tách rõ + `<think>`/JSON thô) and **⚖️ SLM vs RAG** (split-screen foil).
 The demo runs in **DEMO mode from ground truth** if no adapter/GPU is present, so it works offline for
 screenshots.
 
@@ -144,7 +146,7 @@ src/slm_coach/
   reporting/        run_facts + training_log/summary + per-mode/eval tables · charts (loss/lr/grad_norm/per-mode)
 scripts/            gen_sft · gen_dpo · gen_eval · validate_data · split_holdout · train_sft · train_align
                     evaluate · export_model · compare_models (leaderboard) · compare_pair (head-to-head) · rag_baseline
-app.py              Streamlit demo (split-screen SLM vs RAG)
+app.py              Streamlit demo, closed-book (tab Customer ticket + tab SLM vs RAG)
 ```
 
 ## Conventions

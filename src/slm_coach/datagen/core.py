@@ -17,6 +17,7 @@ from slm_coach.ground_truth import (
     ABSTAIN,
     CUE_LIBRARY,
     OUT_OF_CATALOG_CUES,
+    GENERATABLE_RCS,
     ROOT_CAUSES,
     SYSTEM_PROMPT,
     VAGUE_COMPLAINTS,
@@ -40,6 +41,8 @@ __all__ = [
 # evidence_in_ticket so cue-grounding is guaranteed by construction.
 # ---------------------------------------------------------------------------
 
+#: Surface feature names cho opener. KHÔNG đưa "Touring/Elite/Sport" vào đây — chúng là cue
+#: ELIGIBILITY (region/trim/plan) nên sẽ làm detect_rcs lẫn class khi opener của class khác chọn trúng.
 _FEATURES = [
     "Remote Start",
     "Remote Climate",
@@ -182,6 +185,56 @@ _TO_CONFIRM: dict[str, list[str]] = {
         "whether the token carries the feature scope or is expired",
     ],
 }
+
+#: Sub-cue per sub_cause (§ spec depth axis). ``cue`` = một câu chèn vào complaint để GROUND sub_cause;
+#: ``ev`` = mảnh evidence (content-token nằm trong cue, nên cue-grounding đúng by construction);
+#: ``name``/``alt``/``why`` = vật liệu cho tầng-2 differential trong <think> (sub-cause này vs sub-cause
+#: hàng xóm trong cùng class). Không chứa telemetry (oracle-clean).
+_SUB_CUES: dict[str, dict[str, dict[str, str]]] = {
+    "TCU_OFFLINE": {
+        "no_signal_garage": {"cue": "The car has been parked underground in the building garage all week.", "ev": "parked underground in the garage all week", "name": "a plain no-signal case (car underground)", "alt": "a firmware hang or hardware fault", "why": "the car simply has not had cellular where it sits, rather than failing while it has good signal"},
+        "weak_signal_remote": {"cue": "I'm out in a rural spot where the coverage is really weak.", "ev": "rural spot coverage really weak", "name": "a weak-coverage case", "alt": "a complete no-signal or a hardware fault", "why": "there is some coverage but it is too weak for the push to land reliably"},
+        "tcu_asleep": {"cue": "The car hasn't been driven all week and has just sat idle.", "ev": "car not driven all week sat idle", "name": "the unit having gone to sleep after a long idle", "alt": "a no-signal or hardware case", "why": "a long idle puts the unit to sleep, so it just needs waking rather than relocating"},
+        "tcu_firmware_hang": {"cue": "Even parked outside with full signal it still spins and times out.", "ev": "outside with full signal still spins times out", "name": "a firmware hang", "alt": "a plain no-signal case", "why": "it fails even with confirmed good signal, which rules out a coverage problem"},
+        "tcu_hardware_fault": {"cue": "I've tried everything for days and it's still completely dead.", "ev": "tried everything for days still completely dead", "name": "a likely hardware fault", "alt": "a firmware hang", "why": "it persists for days through every self-serve step, beyond a one-off hang"},
+        "low_12v_battery": {"cue": "The car sat for a couple of months and the 12V battery is weak now.", "ev": "car sat for months 12v battery weak", "name": "a low 12V battery starving the unit", "alt": "a no-signal or firmware case", "why": "a weak battery after long storage cannot keep the unit connected"},
+        "carrier_outage": {"cue": "Honestly the whole area's cell network has been down today.", "ev": "whole area cell network down today", "name": "a regional carrier outage", "alt": "a car-side fault", "why": "the network itself is down, so this is not specific to this one vehicle"},
+    },
+    "ENTITLEMENT_CACHE_STALE": {
+        "app_client_cache": {"cue": "When I reinstall the app and log back in it shows up, then it's gone again.", "ev": "reinstall and log back in shows up then gone", "name": "a stale cache on the phone app itself", "alt": "a server-side cache", "why": "a reinstall/re-login temporarily fixes it, which points at the client, not the server"},
+        "ccs_server_cache_ttl": {"cue": "It's active on the website but the app still won't show it even after I re-login.", "ev": "active on website app wont show even after re-login", "name": "a server-side cache still serving an old view", "alt": "a phone-app cache", "why": "it persists even after a clean re-login, so the stale copy is on our side"},
+        "cdn_edge_cache": {"cue": "It's fine on my tablet but stale on my phone, and my partner's app is fine.", "ev": "fine on tablet stale on phone partner fine", "name": "a stale edge/CDN copy in one place", "alt": "a single-device lag", "why": "some devices/regions are correct while others are stale, which points at an edge copy"},
+        "multi_device_sync_lag": {"cue": "It works on my tablet but not on my phone.", "ev": "works on tablet not on phone", "name": "a per-device sync lag", "alt": "an edge-cache issue", "why": "only one of my own devices lags while the rest are correct"},
+        "invalidation_missed": {"cue": "I upgraded my plan and the app never updated to show the new feature.", "ev": "upgraded plan app never updated", "name": "a missed invalidation after a plan change", "alt": "a routine display cache", "why": "the stale view started right after a plan change, so an invalidation was missed"},
+    },
+    "ELIGIBILITY_RULE_CONFLICT": {
+        "region_not_in_matrix": {"cue": "I'm in Canada and it still keeps telling me to subscribe.", "ev": "in canada keeps telling me to subscribe", "name": "the region being missing from the rules", "alt": "a trim or plan-tier rule", "why": "the customer names a region that may not be enabled for this combo"},
+        "trim_not_in_matrix": {"cue": "I have a CR-V Touring and it still asks me to subscribe.", "ev": "cr v touring still asks me to subscribe", "name": "the premium trim being missing from the rules", "alt": "a region or plan-tier rule", "why": "it is a premium trim that may not be enabled for this combo"},
+        "plan_tier_not_enabled": {"cue": "I went for the Elite top tier and it won't activate for my setup.", "ev": "elite top tier wont activate for my setup", "name": "the plan tier not being enabled for this combo", "alt": "a region or trim rule", "why": "the top plan tier may not be turned on for this exact combo"},
+        "matrix_stale_new_model_year": {"cue": "It's a brand-new 2026 model and the app acts like I never subscribed.", "ev": "brand new 2026 model acts like never subscribed", "name": "the rules being stale for a just-released model year", "alt": "a one-off region/trim gap", "why": "a newly launched model year is likely not in the rules yet and affects many owners"},
+        "rule_misconfig_bug": {"cue": "This combo should clearly be allowed but it keeps rejecting me.", "ev": "combo should be allowed keeps rejecting", "name": "a misconfigured rule wrongly rejecting a valid combo", "alt": "a simple missing entry", "why": "the combo should pass, so the rule logic itself looks wrong rather than just unlisted"},
+        "promo_bundle_edge": {"cue": "I got it through a promo bundle and it never switched on.", "ev": "got it through promo bundle never switched on", "name": "a promo/bundle edge case", "alt": "a standard combo rejection", "why": "the purchase came via a promo/bundle, which can miss the normal entitlement path"},
+    },
+    "PAYMENT_WEBHOOK_LOST": {
+        "webhook_delayed": {"cue": "I literally bought it a few minutes ago and it hasn't switched on yet.", "ev": "bought a few minutes ago hasnt switched on", "name": "a brand-new purchase still settling", "alt": "a dropped activation", "why": "it is only minutes old, so it is most likely still completing on its own"},
+        "webhook_dropped": {"cue": "I bought it this morning and hours later there's still nothing.", "ev": "bought this morning hours later still nothing", "name": "an activation that was dropped, not just delayed", "alt": "a brand-new purchase still settling", "why": "hours have passed, so it is past the point of settling on its own"},
+        "payment_pending_review": {"cue": "My card shows the charge as pending and processing.", "ev": "card shows charge pending and processing", "name": "a payment still pending/under review", "alt": "a dropped activation", "why": "the charge has not settled yet, so activation cannot have started"},
+        "duplicate_charge_no_grant": {"cue": "I think I was charged twice but nothing activated.", "ev": "charged twice but nothing activated", "name": "a duplicate charge with no grant", "alt": "a plain dropped activation", "why": "there appear to be two charges, so a dedupe and refund are needed alongside the grant"},
+        "partial_provision": {"cue": "It shows in my orders but the feature is still off.", "ev": "shows in my orders feature still off", "name": "a partial provision (order made, feature not finished)", "alt": "a fully dropped activation", "why": "the order exists, so only the entitlement step is missing"},
+    },
+    "TOKEN_SCOPE": {
+        "stale_scope": {"cue": "I get a 403 permission denied when I open the feature, though login is fine.", "ev": "403 permission denied open feature login fine", "name": "a stale token missing the new scope", "alt": "an expired session", "why": "login works, so it is the feature scope that is stale rather than the whole session"},
+        "token_expired": {"cue": "It keeps logging me out the moment I tap the feature.", "ev": "logs me out moment i tap the feature", "name": "an expired session not being refreshed", "alt": "a stale scope", "why": "it logs the user out, which points at an expired session rather than just a missing scope"},
+        "scope_mapping_bug": {"cue": "I still get a 403 even after signing out and back in.", "ev": "still get 403 even after signing out and back in", "name": "a wrong entitlement-to-scope mapping", "alt": "a stale or expired token", "why": "a clean re-login does not help, so the mapping itself is likely wrong"},
+        "multi_account_mismatch": {"cue": "I have two accounts and I think I'm signed into the wrong email.", "ev": "two accounts signed into wrong email", "name": "being signed into the wrong account", "alt": "a token/scope refresh issue", "why": "the feature may sit on the other account, so the active session simply lacks it"},
+    },
+}
+
+
+def _sub_change(rc: str, sub_cause: str) -> tuple[str, str, str]:
+    """Trả (severity, eta_ttr, escalate_note) của một sub_cause — để <think> nêu nó đổi gì."""
+    ov = resolve_sub_cause(rc, sub_cause)
+    return ov.get("severity") or "", ov.get("eta_ttr") or "", ov.get("escalate_note") or ""
 
 
 @dataclass
@@ -475,6 +528,15 @@ def build_case(
     cue_sentences = [c for c, _ in chosen]
     evidence = [e for _, e in chosen]
 
+    # Chọn sub_cause + chèn sub-cue (ground sub_cause; cho phép tầng-2 differential trong <think>).
+    sub_pool = list(_SUB_CUES.get(rc, {}))
+    if sub_cause is None and sub_pool:
+        sub_cause = rng.choice(sub_pool)
+    sub = _SUB_CUES.get(rc, {}).get(sub_cause or "")
+    if sub:
+        cue_sentences.append(sub["cue"])
+        evidence.append(sub["ev"])
+
     opener = _RC_OPENERS[rc].format(feature=rng.choice(_FEATURES), time=rng.choice(_TIME))
     complaint = opener + " " + " ".join(cue_sentences)
 
@@ -487,7 +549,7 @@ def build_case(
     ]
     think = _pick_think(rng, rc, evidence, confidence, style)
     resolution = build_resolution(
-        rc, confidence=confidence, evidence=evidence, differential=differential
+        rc, confidence=confidence, evidence=evidence, differential=differential, sub_cause=sub_cause
     )
     return Case(
         leading=rc, complaint=complaint, think=think, resolution=resolution, evidence=evidence

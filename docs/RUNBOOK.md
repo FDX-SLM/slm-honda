@@ -80,7 +80,7 @@ uv run python scripts/compare_models.py --eval-root outputs/eval --out outputs/e
 ## 8. Demo + RAG baseline
 ```bash
 uv run python scripts/rag_baseline.py --gold data/gold/gold_test.jsonl        # foil: thấp hơn, không abstain
-HONDA_ADAPTER=checkpoints/dpo_qwen/best uv run streamlit run app.py            # split-screen SLM vs RAG
+HONDA_ADAPTER=checkpoints/dpo_qwen/best uv run streamlit run app.py            # 2 tab: Customer ticket + SLM vs RAG
 ```
 Thiếu adapter/GPU → app tự chạy DEMO mode từ ground truth (vẫn trung thực) để chụp hình offline.
 
