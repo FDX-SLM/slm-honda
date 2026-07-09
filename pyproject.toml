@@ -71,6 +71,11 @@ tracking = [
 viz = [
     "matplotlib>=3.8",
 ]
+# --- Web demo backend (webdemo/): FastAPI serve UI + /api. httpx đã có ở core. ---
+webdemo = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
 
 [dependency-groups]
 # Installed by default on `uv sync` (uv treats `dev` as a default group).

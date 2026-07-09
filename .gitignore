@@ -16,6 +16,12 @@ htmlcov/
 .venv/
 venv/
 
+# --- Node / frontend (webdemo) ---
+node_modules/
+
+# --- Adapter repo cloned locally (tải bằng webdemo/setup.sh, KHÔNG commit) ---
+honda-entitlement-resolver-slm/
+
 # --- Secrets ---
 .env
 .env.local

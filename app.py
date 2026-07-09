@@ -36,10 +36,20 @@ from slm_coach.eval.rag import RagBaseline
 from slm_coach.ground_truth import CHURN_RISK_LEVELS, PRIORITY, SEVERITY, SYSTEM_PROMPT
 from slm_coach.oracle import parse_output
 
+# Tự nạp .env (HONDA_BASE/HONDA_ADAPTER/HONDA_4BIT/HONDA_MAX_NEW_TOKENS...) để `uv run streamlit run
+# app.py` trần vẫn trỏ đúng adapter — không cần export tay. Thiếu python-dotenv thì bỏ qua êm.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).with_name(".env"))
+except Exception:  # noqa: BLE001 - dotenv là tùy chọn; env vẫn có thể set từ shell
+    pass
+
 BASE = os.environ.get("HONDA_BASE", "Qwen/Qwen3.5-9B")
 ADAPTER = os.environ.get("HONDA_ADAPTER", "checkpoints/sft/best")
 FOUR_BIT = os.environ.get("HONDA_4BIT", "true").strip().lower() not in ("false", "0", "no")
-MAX_NEW_TOKENS = int(os.environ.get("HONDA_MAX_NEW_TOKENS", "640"))
+# Output đầy đủ (<think> + JSON + artifacts) ~1550 token; mặc định phải đủ rộng kẻo JSON bị cắt cụt.
+MAX_NEW_TOKENS = int(os.environ.get("HONDA_MAX_NEW_TOKENS", "1700"))
 
 ABSTAIN = "INSUFFICIENT_EVIDENCE"
 
@@ -109,6 +119,12 @@ def load_model() -> tuple[object, object] | None:
             model = PeftModel.from_pretrained(base, str(adapter)).eval()
             tok = AutoTokenizer.from_pretrained(str(adapter))
         else:
+            # Không thấy adapter → chạy BASE TRẦN: output sai schema (RC lạ, JSON bịa) và panel trống.
+            # Báo RÕ để không âm thầm nhầm là "model hỏng". Sửa: trỏ HONDA_ADAPTER tới thư mục adapter.
+            st.warning(
+                f"⚠️ Không thấy adapter `{ADAPTER}` — đang chạy BASE `{BASE}` TRẦN (chưa fine-tune). "
+                "Output sẽ sai schema và panel trống. Đặt HONDA_ADAPTER trỏ tới thư mục adapter thật."
+            )
             model, tok = base.eval(), AutoTokenizer.from_pretrained(BASE)
         return model, tok
     except Exception as exc:  # noqa: BLE001 - any failure → DEMO mode
@@ -425,7 +441,10 @@ def render_customer_panel(res: dict[str, Any]) -> None:
 
         ladder = res.get("customer_self_service") or []
         if ladder:
-            st.markdown("<div class='k'>Hướng dẫn khách tự xử lý (nhanh → khó)</div>", unsafe_allow_html=True)
+            st.markdown(
+                "<div class='k'>Hướng dẫn khách tự xử lý (nhanh → khó)</div>",
+                unsafe_allow_html=True,
+            )
             rows = "".join(
                 f"<div class='step'><div class='step-num'>{_esc(s.get('tier'))}</div>"
                 f"<div><div class='step-act'>{_esc(s.get('action'))}</div>"
@@ -458,15 +477,23 @@ def render_internal_panel(think: str, res: dict[str, Any]) -> None:
         with cols[0]:
             st.markdown("<div class='k'>Cue đọc được</div>", unsafe_allow_html=True)
             ev = "".join(
-                f"<span class='chip'>{_esc(e)}</span>" for e in diag.get("evidence_in_ticket", []) or []
+                f"<span class='chip'>{_esc(e)}</span>"
+                for e in diag.get("evidence_in_ticket", []) or []
             )
-            st.markdown(f"<div class='chips'>{ev or '<span class=muted>—</span>'}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='chips'>{ev or '<span class=muted>—</span>'}</div>",
+                unsafe_allow_html=True,
+            )
         with cols[1]:
             st.markdown("<div class='k'>Cần xác minh</div>", unsafe_allow_html=True)
             tc = "".join(
-                f"<span class='chip chip-todo'>{_esc(c)}</span>" for c in diag.get("to_confirm", []) or []
+                f"<span class='chip chip-todo'>{_esc(c)}</span>"
+                for c in diag.get("to_confirm", []) or []
             )
-            st.markdown(f"<div class='chips'>{tc or '<span class=muted>—</span>'}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='chips'>{tc or '<span class=muted>—</span>'}</div>",
+                unsafe_allow_html=True,
+            )
 
         # Định tuyến — một dấu ? duy nhất ở tiêu đề (native help), hover ra cả 3 thang §2.2.
         churn = res.get("churn_risk") or {}
@@ -499,7 +526,6 @@ def render_internal_panel(think: str, res: dict[str, Any]) -> None:
 
 def render_ticket_tab(loaded: tuple[object, object] | None) -> None:
     """Tab 'Customer ticket': 3 bước — tạo ticket → SLM chẩn đoán → output thô."""
-
     # --- Bước 1 — khách tạo ticket ---
     with st.container(border=True):
         st.subheader("Bước 1 — Khách tạo ticket", help=HELP_TICKET)
@@ -544,7 +570,9 @@ def render_ticket_tab(loaded: tuple[object, object] | None) -> None:
         lead = (res.get("diagnosis") or {}).get("leading_root_cause", "?")
         conf = (res.get("diagnosis") or {}).get("confidence")
         st.subheader("Bước 2 — SLM chẩn đoán", help=HELP_DIAGNOSE)
-        verdict = _pill(f"confidence {conf:.2f}" if conf is not None else "confidence —", _conf_kind(conf))
+        verdict = _pill(
+            f"confidence {conf:.2f}" if conf is not None else "confidence —", _conf_kind(conf)
+        )
         if res.get("runbook_id"):
             verdict += _pill(res["runbook_id"], "blue")
         st.markdown(
@@ -554,11 +582,13 @@ def render_ticket_tab(loaded: tuple[object, object] | None) -> None:
         )
         email_html = (
             f"<a href='mailto:{_attr(email)}' style='color:#7db1ff;text-decoration:none'>{_esc(email)}</a>"
-            if email.strip() else "—"
+            if email.strip()
+            else "—"
         )
         phone_html = (
             f"<a href='tel:{_attr(phone)}' style='color:#7db1ff;text-decoration:none'>{_esc(phone)}</a>"
-            if phone.strip() else "—"
+            if phone.strip()
+            else "—"
         )
         st.markdown(
             "<div class='kv-row' style='margin:.1rem 0 .3rem'>"
@@ -570,7 +600,9 @@ def render_ticket_tab(loaded: tuple[object, object] | None) -> None:
             "</div>",
             unsafe_allow_html=True,
         )
-        st.caption(f"{latency:.2f}s · closed-book · liên hệ trên chỉ để CS gọi lại, không đưa vào model")
+        st.caption(
+            f"{latency:.2f}s · closed-book · liên hệ trên chỉ để CS gọi lại, không đưa vào model"
+        )
 
         left, right = st.columns(2, gap="large")
         with left:
