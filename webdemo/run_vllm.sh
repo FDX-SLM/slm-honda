@@ -18,8 +18,16 @@ if [ ! -x "$VENV/bin/vllm" ]; then
   echo "[vllm] không thấy $VENV/bin/vllm — cài vLLM cu129 vào venv cô lập trước." >&2
   exit 1
 fi
-echo "[vllm] serve $MODEL → http://127.0.0.1:8800 (served-name ${VLLM_MODEL:-dpo_qwen})"
+# INT4 (bitsandbytes nf4, in-flight): decode ~2.2x nhanh hơn bf16 (~125 vs ~57 tok/s) — 1 request đơn
+# lẻ bị chặn bởi băng thông VRAM, INT4 đọc ~1/4 số byte weight nên nhanh hơn. Không cần calibrate,
+# dùng chính loader qwen3_5 của vLLM (autoawq/gptq build cho transformers 4.x, không hiểu arch 5.x).
+# Tắt INT4 (quay lại bf16): đặt VLLM_QUANT="" trong .env.
+QUANT="${VLLM_QUANT:-bitsandbytes}"
+QUANT_ARGS=()
+if [ -n "$QUANT" ]; then QUANT_ARGS=(--quantization "$QUANT" --load-format "$QUANT"); fi
+echo "[vllm] serve $MODEL → http://127.0.0.1:8800 (served-name ${VLLM_MODEL:-dpo_qwen}, quant=${QUANT:-none})"
 exec "$VENV/bin/vllm" serve "$MODEL" \
   --served-model-name "${VLLM_MODEL:-dpo_qwen}" \
+  "${QUANT_ARGS[@]}" \
   --max-model-len 4096 --gpu-memory-utilization 0.85 \
   --host 127.0.0.1 --port 8800

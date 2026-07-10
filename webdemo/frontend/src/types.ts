@@ -9,14 +9,28 @@ export interface SystemSignal {
   status: SignalStatus;
 }
 
+export interface Customer {
+  name: string;
+  email: string;
+  phone: string;
+}
+
 export interface DemoCase {
   id: string;
   label: string;
   complaint: string;
   expectedRootCause: string | null;
   outputChannel: OutputChannel;
+  customer: Customer;
   vehicleContext: Record<string, string>;
   systemSignals: SystemSignal[];
+}
+
+export interface SlmArtifacts {
+  rcaMd: string | null;
+  workOrderMd: string | null;
+  customerEmail: string | null;
+  diagramMermaid: string | null;
 }
 
 export interface NormalizedDiagnosis {
@@ -35,9 +49,19 @@ export interface NormalizedDiagnosis {
   similarIncident: string | null;
   nextActions: string[];
   missingEvidence: string[];
+  severity: string | null;
+  priority: string | null;
+  artifacts: SlmArtifacts | null;
   latencyMs: number | null;
   isMock: boolean;
   errorMessage: string | null;
+  // Nguyên văn output của SLM (chỉ endpoint /api/diagnose/slm trả về) để in raw ở UI.
+  rawText?: string;
+  rawResolution?: Record<string, unknown> | null;
+  think?: string;
+  // Tốc độ sinh: số token + token/s (đo từ vLLM usage / generate).
+  genTokens?: number | null;
+  tokensPerSec?: number | null;
 }
 
 export type DiagnosisState = "idle" | "running" | "complete" | "partial" | "error";
