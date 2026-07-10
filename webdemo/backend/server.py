@@ -13,6 +13,7 @@ Phục vụ luôn frontend đã build (../frontend/dist) trên cùng cổng → 
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,7 @@ sys.path.insert(
 import slm_service  # noqa: E402
 from cases import CASES_BY_ID, public_cases  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from gemini_service import run_gemini  # noqa: E402
 from normalize import normalize_slm  # noqa: E402
@@ -68,16 +69,62 @@ def cases() -> list[dict[str, Any]]:
     return public_cases()
 
 
-@app.post("/api/diagnose/slm")
-def diagnose_slm(req: DiagnoseRequest) -> dict[str, Any]:
-    """Chạy SLM closed-book trên lời than → NormalizedDiagnosis (chạy trong threadpool)."""
-    text, latency_ms = slm_service.run_slm(req.complaint)
+def _finalize(text: str, latency_ms: int, gen_tokens: int | None, channel: str) -> dict[str, Any]:
+    """Parse output thô của SLM → NormalizedDiagnosis + raw + token/s (dùng chung sync & stream)."""
     # chat template chèn sẵn '<think>' vào prompt nên output bắt đầu thẳng bằng reasoning; thêm lại
     # thẻ mở để split_think lấy được phần suy luận.
     if "</think>" in text and "<think>" not in text:
         text = "<think>\n" + text
     think, res = parse_output(text)
-    return normalize_slm(think, res, latency_ms, _case_channel(req.caseId))
+    out = normalize_slm(think, res, latency_ms, channel)
+    # Kèm nguyên văn output của SLM để UI in "raw SLM json" ở dưới cùng (không thêm thắt).
+    out["rawText"] = text
+    out["rawResolution"] = res
+    out["think"] = think
+    # Token/s = số token sinh / thời gian generate (cho UI hiện sát bên latency).
+    out["genTokens"] = gen_tokens
+    out["tokensPerSec"] = (
+        round(gen_tokens / (latency_ms / 1000), 1) if gen_tokens and latency_ms else None
+    )
+    return out
+
+
+@app.post("/api/diagnose/slm")
+def diagnose_slm(req: DiagnoseRequest) -> dict[str, Any]:
+    """Chạy SLM closed-book trên lời than → NormalizedDiagnosis (chạy trong threadpool)."""
+    # Chỉ ca hướng dẫn khách (TCU, channel=customer) mới bỏ artifacts cho nhanh (dừng trước khối
+    # artifacts — an toàn, không đổi phân loại). Ca nội bộ (cache/eligibility/…) sinh ĐẦY ĐỦ để có
+    # RCA/work-order/mermaid. (Không prompt cắt customer_self_service vì làm model phân loại sai.)
+    channel = _case_channel(req.caseId)
+    text, latency_ms, gen_tokens = slm_service.run_slm(
+        req.complaint, skip_artifacts=channel == "customer"
+    )
+    out = _finalize(text, latency_ms, gen_tokens, channel)
+    return out
+
+
+@app.post("/api/diagnose/slm/stream")
+def diagnose_slm_stream(req: DiagnoseRequest) -> StreamingResponse:
+    """Stream SLM qua SSE: từng token (full text) trước, rồi 1 event 'done' chứa NormalizedDiagnosis."""
+    channel = _case_channel(req.caseId)
+    skip = channel == "customer"
+
+    def gen() -> Any:
+        text = ""
+        latency_ms = 0
+        gen_tokens: int | None = None
+        try:
+            for ev in slm_service.stream_slm(req.complaint, skip_artifacts=skip):
+                if ev[0] == "token":
+                    yield f"data: {json.dumps({'type': 'token', 'text': ev[1]})}\n\n"
+                elif ev[0] == "final":
+                    _, text, latency_ms, gen_tokens = ev
+            out = _finalize(text, latency_ms, gen_tokens, channel)
+            yield f"data: {json.dumps({'type': 'done', 'result': out})}\n\n"
+        except Exception as exc:  # noqa: BLE001 - báo lỗi qua stream để UI hiển thị
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/diagnose/gemini")

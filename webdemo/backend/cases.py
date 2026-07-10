@@ -23,8 +23,13 @@ CASES: list[dict[str, Any]] = [
         ),
         "expectedRootCause": "TCU_OFFLINE",
         "outputChannel": "customer",
+        "customer": {
+            "name": "Daniel Osei",
+            "email": "daniel.osei@gmail.com",
+            "phone": "+1 415-555-0142",
+        },
         "vehicleContext": {
-            "model": "CR-V Touring",
+            "model": "2025 CR-V Touring",
             "region": "US-West",
             "vin": "1HGRM4H50JL000000",
         },
@@ -50,8 +55,13 @@ CASES: list[dict[str, Any]] = [
         ),
         "expectedRootCause": "ENTITLEMENT_CACHE_STALE",
         "outputChannel": "internal",
+        "customer": {
+            "name": "Priya Nair",
+            "email": "priya.nair@gmail.com",
+            "phone": "+1 617-555-0188",
+        },
         "vehicleContext": {
-            "model": "Accord Touring",
+            "model": "2024 Accord Touring",
             "region": "US-East",
             "vin": "1HGCV1F3XLA000000",
         },
@@ -74,8 +84,13 @@ CASES: list[dict[str, Any]] = [
         ),
         "expectedRootCause": "ELIGIBILITY_RULE_CONFLICT",
         "outputChannel": "internal",
+        "customer": {
+            "name": "Marcus Reeves",
+            "email": "marcus.reeves@gmail.com",
+            "phone": "+1 206-555-0119",
+        },
         "vehicleContext": {
-            "model": "CR-V Touring",
+            "model": "2025 CR-V Touring",
             "region": "US-West",
             "vin": "2HKRW2H50MH000000",
         },
@@ -96,7 +111,16 @@ CASES: list[dict[str, Any]] = [
         "complaint": "It just doesn't work. I paid for it and nothing happens.",
         "expectedRootCause": None,
         "outputChannel": "internal",
-        "vehicleContext": {"model": "Unknown", "region": "Unknown", "vin": "Unknown"},
+        "customer": {
+            "name": "Alex Morgan",
+            "email": "alex.morgan@gmail.com",
+            "phone": "+1 512-555-0170",
+        },
+        "vehicleContext": {
+            "model": "2025 Honda (unspecified)",
+            "region": "Unknown",
+            "vin": "Unknown",
+        },
         "systemSignals": [
             {"name": "Payment", "value": "unknown", "status": "unknown"},
             {"name": "Subscription", "value": "unknown", "status": "unknown"},
@@ -117,6 +141,7 @@ def public_cases() -> list[dict[str, Any]]:
         "complaint",
         "expectedRootCause",
         "outputChannel",
+        "customer",
         "vehicleContext",
         "systemSignals",
     )

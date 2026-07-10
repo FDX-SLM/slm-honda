@@ -37,6 +37,9 @@ def _empty(model: str) -> dict[str, Any]:
         "similarIncident": None,
         "nextActions": [],
         "missingEvidence": [],
+        "severity": None,
+        "priority": None,
+        "artifacts": None,
         "latencyMs": None,
         "isMock": False,
         "errorMessage": None,
@@ -88,6 +91,20 @@ def normalize_slm(
     out["runbook"] = res.get("runbook_id")
     out["similarIncident"] = res.get("similar_incident")
     out["nextActions"] = list(res.get("fix_steps", []) or [])
+    out["severity"] = res.get("severity")
+    out["priority"] = res.get("priority")
+    # Artifacts (RCA / work-order / email / mermaid) — chỉ lấy các trường chuỗi để UI in ra.
+    arts = res.get("artifacts") or {}
+    out["artifacts"] = (
+        {
+            "rcaMd": arts.get("rca_md"),
+            "workOrderMd": arts.get("work_order_md"),
+            "customerEmail": arts.get("customer_email"),
+            "diagramMermaid": arts.get("diagram_mermaid"),
+        }
+        if arts
+        else None
+    )
 
     if is_abstain:
         # Abstain: tóm tắt thành thông điệp "chưa đủ bằng chứng" + danh sách cần kiểm.

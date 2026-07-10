@@ -58,6 +58,14 @@ else
     "torch==2.11.0" "torchvision==0.26.0" "torchaudio==2.11.0"
 fi
 
+# --- 3b. bitsandbytes cho INT4 nf4 (run_vllm.sh mặc định VLLM_QUANT=bitsandbytes → decode ~2.2x) ---
+if "$VLLM_VENV/bin/python" -c "import bitsandbytes" 2>/dev/null; then
+  log "3b/6 bitsandbytes đã có trong vLLM venv — bỏ qua."
+else
+  log "3b/6 Cài bitsandbytes vào vLLM venv (cần cho INT4 in-flight; tắt bằng VLLM_QUANT= trong .env)…"
+  uv pip install --python "$VLLM_VENV/bin/python" bitsandbytes
+fi
+
 # --- 4. Merge full checkpoint (tải base 19GB + merge) ---
 if [ -f "$MERGED/model.safetensors.index.json" ]; then
   log "4/6 Checkpoint merge đã có ($MERGED) — bỏ qua."
