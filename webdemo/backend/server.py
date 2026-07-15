@@ -69,6 +69,57 @@ def cases() -> list[dict[str, Any]]:
     return public_cases()
 
 
+# Field cấp cao nhất của resolution package (ngoài "diagnosis"). Nếu res parse ra THIẾU hết các field
+# này thì model có thể đã xuất "diagnosis" và phần resolution thành 2 JSON object RỜI (thỉnh thoảng gặp
+# ở path HF sampling) → parse_output/extract_json chỉ đọc object đầu. Khi đó ta gộp các object sau vào.
+_RESOLUTION_KEYS = frozenset({"runbook_id", "owner_team", "why_plain", "fix_steps", "artifacts"})
+
+
+def _iter_top_level_json(text: str) -> Any:
+    """Yield từng object JSON top-level ``{...}`` cân bằng ngoặc trong text (bỏ qua nội dung chuỗi)."""
+    depth = 0
+    in_str = False
+    escape = False
+    start = -1
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                try:
+                    yield json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    pass
+                start = -1
+
+
+def _merge_split_resolution(text: str, res: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Gộp resolution bị tách thành nhiều object rời (xem ghi chú ở ``_RESOLUTION_KEYS``)."""
+    if res is None or _RESOLUTION_KEYS & res.keys():
+        return res  # đã đủ (1 object gộp sẵn) — không cần làm gì
+    after = text.split("</think>")[-1]
+    merged = dict(res)
+    for obj in _iter_top_level_json(after):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                merged.setdefault(k, v)  # object đầu (diagnosis) thắng nếu trùng key
+    return merged
+
+
 def _finalize(text: str, latency_ms: int, gen_tokens: int | None, channel: str) -> dict[str, Any]:
     """Parse output thô của SLM → NormalizedDiagnosis + raw + token/s (dùng chung sync & stream)."""
     # chat template chèn sẵn '<think>' vào prompt nên output bắt đầu thẳng bằng reasoning; thêm lại
@@ -76,6 +127,7 @@ def _finalize(text: str, latency_ms: int, gen_tokens: int | None, channel: str) 
     if "</think>" in text and "<think>" not in text:
         text = "<think>\n" + text
     think, res = parse_output(text)
+    res = _merge_split_resolution(text, res)
     out = normalize_slm(think, res, latency_ms, channel)
     # Kèm nguyên văn output của SLM để UI in "raw SLM json" ở dưới cùng (không thêm thắt).
     out["rawText"] = text

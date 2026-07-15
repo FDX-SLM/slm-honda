@@ -33,6 +33,17 @@ export interface SlmArtifacts {
   diagramMermaid: string | null;
 }
 
+// Kế hoạch xử lý (L2) — grounded từ runbook theo runbook_id model chẩn đoán.
+export interface ResolutionPlan {
+  runbookId: string | null;
+  preconditions: string[];
+  steps: string[];
+  owner: string | null;
+  escalation: string | null;
+  eta: string | null;
+  grounded: boolean;
+}
+
 export interface NormalizedDiagnosis {
   model: "slm" | "gemini";
   status: "success" | "abstain" | "error";
@@ -52,6 +63,7 @@ export interface NormalizedDiagnosis {
   severity: string | null;
   priority: string | null;
   artifacts: SlmArtifacts | null;
+  resolutionPlan?: ResolutionPlan | null;
   latencyMs: number | null;
   isMock: boolean;
   errorMessage: string | null;
