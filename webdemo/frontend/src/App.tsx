@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { diagnoseSlmStream, getCases } from "./api";
 import type {
   ActiveMainTab,
   DemoCase,
   DiagnosisState,
   NormalizedDiagnosis,
+  ResolutionPlan,
 } from "./types";
 
 const TAB_LABEL: Record<ActiveMainTab, string> = {
@@ -150,6 +151,7 @@ function InternalView({ d }: { d: NormalizedDiagnosis }) {
       </>
     );
   }
+  const isCache = d.rootCause === "ENTITLEMENT_CACHE_STALE";
   return (
     <>
       <div className="verdict">
@@ -168,15 +170,18 @@ function InternalView({ d }: { d: NormalizedDiagnosis }) {
           </ul>
         </>
       )}
+      {/* Resolvement Planning (L2) + de-dup CHỈ áp cho ca cache-stale; các ca khác giữ nguyên như cũ. */}
+      {isCache && <ResolutionPlanPanel p={d.resolutionPlan} />}
       <div className="fields">
         <Field label="Affected system" value={d.affectedSystem} />
         <Field label="Owner" value={d.owner} />
         <Field label="Escalation" value={d.escalation} />
+        {isCache && <Field label="SLA" value={d.resolutionPlan?.eta ?? null} />}
         <Field label="Similar incident" value={d.similarIncident} />
         <Field label="Severity" value={d.severity} />
         <Field label="Priority" value={d.priority} />
       </div>
-      {d.nextActions.length > 0 && (
+      {!isCache && d.nextActions.length > 0 && (
         <>
           <div className="block-label">Next actions</div>
           <ol className="steps">
@@ -191,6 +196,30 @@ function InternalView({ d }: { d: NormalizedDiagnosis }) {
   );
 }
 
+function ResolutionPlanPanel({ p }: { p?: ResolutionPlan | null }) {
+  if (!p || p.steps.length === 0) return null;
+  return (
+    <div className="plan">
+      <div className="plan-title">Resolvement Planning</div>
+      {p.preconditions.length > 0 && (
+        <div className="plan-pre">
+          <span className="field-label">Preconditions</span>
+          <ul className="bullets">
+            {p.preconditions.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <ol className="steps plan-steps">
+        {p.steps.map((s, i) => (
+          <li key={i}>{s}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function Artifacts({ a }: { a: NormalizedDiagnosis["artifacts"] }) {
   if (!a) return null;
   return (
@@ -200,14 +229,6 @@ function Artifacts({ a }: { a: NormalizedDiagnosis["artifacts"] }) {
           <div className="block-label">RCA</div>
           <div className="artifact-md">
             <Markdown text={a.rcaMd} />
-          </div>
-        </>
-      )}
-      {a.workOrderMd && (
-        <>
-          <div className="block-label">Work order</div>
-          <div className="artifact-md">
-            <Markdown text={a.workOrderMd} />
           </div>
         </>
       )}
@@ -232,13 +253,14 @@ function Artifacts({ a }: { a: NormalizedDiagnosis["artifacts"] }) {
 /* --------------------------- Raw SLM output ----------------------------- */
 
 function RawBlock({ d }: { d: NormalizedDiagnosis }) {
-  // Output gốc/đầu tiên của SLM = full text (`<think>…</think>` + JSON). Chỉ giữ đúng một cái này;
-  // phần cấu trúc phía trên đã là bản parse cho dễ đọc rồi.
-  if (!d.rawText) return null;
+  // Khi xong: in <think> (nếu có) + JSON đã pretty cho dễ đọc. Parse fail → fallback rawText thô.
+  const pretty = d.rawResolution ? JSON.stringify(d.rawResolution, null, 2) : null;
+  if (!pretty && !d.rawText) return null;
   return (
     <section className="card raw-card">
       <div className="card-sub">Raw SLM output</div>
-      <pre className="raw">{d.rawText}</pre>
+      {d.think && <pre className="raw think">{`<think>\n${d.think}\n</think>`}</pre>}
+      <pre className="raw">{pretty ?? d.rawText}</pre>
     </section>
   );
 }
@@ -252,6 +274,9 @@ export default function App() {
   const [state, setState] = useState<DiagnosisState>("idle");
   const [result, setResult] = useState<NormalizedDiagnosis | null>(null);
   const [streamText, setStreamText] = useState<string>("");
+  // Gom token vào ref, flush ra state tối đa ~mỗi 80ms → tránh re-render cả khối text 1000+ lần (lag).
+  const streamBufRef = useRef<string>("");
+  const flushTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     getCases()
@@ -276,23 +301,47 @@ export default function App() {
     setState("idle");
   }
 
+  function stopFlush() {
+    if (flushTimerRef.current != null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }
+
   async function diagnose() {
     if (!complaint.trim() || state === "running") return;
     setState("running");
     setResult(null);
     setStreamText("");
+    streamBufRef.current = "";
+    stopFlush();
     try {
       // Stream full text trước (từng token), khi xong mới có NormalizedDiagnosis để render + JSON.
       await diagnoseSlmStream(
         { complaint, caseId: selectedId, requestedOutput: "internal_diagnosis" },
-        (t) => setStreamText((prev) => prev + t),
+        (t) => {
+          // Gom vào ref; chỉ đẩy ra state theo nhịp (throttle) để trình duyệt không re-render mỗi token.
+          streamBufRef.current += t;
+          if (flushTimerRef.current == null) {
+            flushTimerRef.current = window.setTimeout(() => {
+              flushTimerRef.current = null;
+              setStreamText(streamBufRef.current);
+            }, 80);
+          }
+        },
         (d) => {
+          stopFlush();
+          setStreamText(streamBufRef.current); // flush nốt phần còn lại
           setResult(d);
           setState(d.status === "error" ? "error" : "complete");
         },
-        () => setState("error"),
+        () => {
+          stopFlush();
+          setState("error");
+        },
       );
     } catch {
+      stopFlush();
       setState("error");
     }
   }

@@ -34,6 +34,14 @@ fi
 set -a; . ./.env; set +a
 : "${HF_TOKEN:?Thiếu HF_TOKEN trong .env (cần để tải adapter private)}"
 
+# --- 0b. TLS: một số máy Vast có proxy chặn HTTPS (MITM). curl/git tin CA hệ thống nhưng uv (rustls)
+# và huggingface_hub (certifi) thì KHÔNG → lỗi "invalid peer certificate: UnknownIssuer" khi tải gói.
+# Ép tất cả dùng CA hệ thống. Vô hại trên máy không có proxy. Đặt ở đây để mọi bước bên dưới kế thừa.
+SYS_CA=/etc/ssl/certs/ca-certificates.crt
+if [ -f "$SYS_CA" ]; then
+  export UV_SYSTEM_CERTS=true REQUESTS_CA_BUNDLE="$SYS_CA" SSL_CERT_FILE="$SYS_CA" CURL_CA_BUNDLE="$SYS_CA"
+fi
+
 # --- 1. Python env cho backend + merge (torch cu128 + fastapi) ---
 log "1/6 Cài Python deps (uv sync --extra train --extra webdemo)…"
 uv sync --extra train --extra webdemo
@@ -52,7 +60,11 @@ if [ -x "$VLLM_VENV/bin/vllm" ] && "$VLLM_VENV/bin/python" -c "import vllm,torch
 else
   log "3/6 Tạo vLLM venv + cài vllm==0.24.0+cu129 (khớp driver CUDA 12.9) + torch cu128…"
   uv venv "$VLLM_VENV" --python 3.12
-  uv pip install --python "$VLLM_VENV/bin/python" "$VLLM_WHEEL" --extra-index-url https://download.pytorch.org/whl/cu128
+  # --index-strategy unsafe-best-match: flashinfer-python==0.6.12 (dep của wheel vLLM) chỉ có trên
+  # PyPI, không có trên index cu128 → mặc định uv bỏ qua và báo "unsatisfiable". Cờ này cho uv xét mọi
+  # index. Không dùng cờ = setup fail ở bước 3.
+  uv pip install --python "$VLLM_VENV/bin/python" "$VLLM_WHEEL" \
+    --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
   # ép torch-family sang cu128 (4090 driver 12.9, KHÔNG forward-compat → cu130 sẽ fail 'driver too old')
   uv pip install --python "$VLLM_VENV/bin/python" --index-url https://download.pytorch.org/whl/cu128 \
     "torch==2.11.0" "torchvision==0.26.0" "torchaudio==2.11.0"

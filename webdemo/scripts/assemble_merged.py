@@ -74,6 +74,18 @@ def main() -> None:
             dst = Path(OUT) / n
             if not dst.exists() and n not in ("model.safetensors.index.json", "config.json"):
                 shutil.copy(f, dst)
+
+    # vLLM serve qua path MULTIMODAL cần processor config, nhưng base tải qua
+    # AutoModel/AutoTokenizer KHÔNG kéo các file này về snapshot → tải trực tiếp từ hub.
+    from huggingface_hub import hf_hub_download
+
+    for n in ("preprocessor_config.json", "video_preprocessor_config.json"):
+        dst = Path(OUT) / n
+        if not dst.exists():
+            try:
+                shutil.copy(hf_hub_download(BASE, n, token=os.environ.get("HF_TOKEN")), dst)
+            except Exception as e:  # noqa: BLE001
+                print(f"[assemble] CẢNH BÁO: không tải được {n}: {e}", flush=True)
     print(f"[assemble] DONE {time.time() - t:.0f}s → {OUT}", flush=True)
 
 

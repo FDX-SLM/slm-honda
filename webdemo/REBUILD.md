@@ -99,3 +99,69 @@ Trên UI, chọn 1 ca → **Diagnose**:
 - vLLM `bitsandbytes ... not found` → chạy `uv pip install --python /workspace/vllm-venv/bin/python bitsandbytes`
   (setup.sh đã tự làm; chỉ cần khi gắn lại volume cũ có vllm-venv nhưng thiếu bnb).
 - Port 8600/8800 bận → `PORT=8700 ./webdemo/run.sh`, hoặc `VLLM_URL` trỏ cổng khác.
+
+---
+
+## 6. Sự cố đã gặp trên máy Vast MỚI (đã fix sẵn trong `setup.sh`, không phải làm tay)
+
+Ba lỗi dưới đây từng làm `setup.sh` gãy trên một instance mới; nay đã được xử lý tự động trong script.
+Ghi lại để biết vì sao có các dòng đó, và để chẩn đoán nếu tái diễn:
+
+1. **`invalid peer certificate: UnknownIssuer`** khi `uv sync` / cài vLLM / `hf_hub_download`.
+   Nguyên nhân: máy có **proxy chặn HTTPS (MITM)**; `curl`/`git` tin CA hệ thống nhưng `uv` (rustls) và
+   `huggingface_hub` (certifi) thì không. Fix: `setup.sh` export `UV_SYSTEM_CERTS=true` +
+   `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE`/`CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt`. Vô hại nếu
+   máy không có proxy. (Kiểm tra thủ công: `curl -sI https://files.pythonhosted.org/` chạy được nhưng
+   `uv` báo cert lỗi → đúng bệnh này.)
+
+2. **`vllm==0.24.0+cu129 ... unsatisfiable` (flashinfer-python==0.6.12 not found)**.
+   Nguyên nhân: `flashinfer-python` bản đó chỉ có trên **PyPI**, không có trên index `cu128`; uv mặc định
+   chỉ xét index đầu tiên chứa gói. Fix: thêm `--index-strategy unsafe-best-match` vào lệnh cài vLLM.
+
+3. **vLLM crash `Can't load image processor ... preprocessor_config.json`**.
+   Nguyên nhân: vLLM serve qua path **multimodal** (`Qwen3_5ForConditionalGeneration`) cần
+   `preprocessor_config.json` + `video_preprocessor_config.json`, nhưng `assemble_merged.py` tải base qua
+   `AutoModelForCausalLM`/`AutoTokenizer` nên các file này **không** về snapshot → thiếu trong thư mục
+   merge. Fix: `assemble_merged.py` nay tự `hf_hub_download` 2 file đó từ base repo vào `honda-merged-full`.
+   (Máy đã merge từ trước mà thiếu file → chạy `assemble_merged.py` lại cũng chỉ bổ sung 2 file này, không
+   merge lại toàn bộ.)
+
+### Ghi chú cho agent (Claude Code) — tiết kiệm thời gian debug
+- **Background Bash báo "Exit code 1" mà không có output** thường KHÔNG phải lỗi thật của dịch vụ: harness
+  reap process-group khi lệnh foreground kết thúc, hoặc `pkill -f '<pattern>'` **tự khớp chính dòng lệnh
+  shell của mình** và giết luôn shell đó. Trước khi kết luận vLLM/backend lỗi, hãy kiểm tra sự thật:
+  `ss -tlnp | grep 8800/8600`, `nvidia-smi` (VRAM), và đọc file `.output` của task. Đừng dùng
+  `pkill -f 'vllm-venv/bin/vllm'` — nó khớp chính lệnh đang chạy; hãy kill theo **PID lấy từ cổng**
+  (`ss -tlnp | grep :8800 | grep -oP 'pid=\K[0-9]+'`).
+- Dịch vụ chạy nền **không sống qua lần restart session** (teardown giết chúng). Sau khi quay lại, kiểm tra
+  `:8800`/`:8600` và chạy lại `run_vllm.sh` (chờ ~3′) rồi `run.sh` nếu cần.
+
+### Về hiển thị UI (không phải lỗi)
+- Ca **abstain** (`INSUFFICIENT_EVIDENCE`) render card gọn (summary + "To confirm"), KHÔNG có
+  owner/runbook/artifacts — đúng thiết kế: chưa có root cause thì không bịa resolution.
+- Card nội bộ đôi khi thiếu owner/artifacts nếu model xuất `diagnosis` và `resolution` thành **2 JSON
+  object rời** (hay gặp ở path HF sampling); `extract_json` chỉ đọc object đầu. Backend nay tự **gộp** các
+  object rời (`_merge_split_resolution` trong `server.py`). Với vLLM (greedy, temp=0) output là 1 object nên
+  không dính; luôn chạy vLLM cho demo.
+
+---
+
+## 7. Chạy 24/7 (supervisor) — tùy chọn, để demo sống độc lập VSCode
+
+Mặc định `run_vllm.sh`/`run.sh` chạy theo phiên terminal/VSCode → đóng là chết. Muốn demo **luôn-on**
+(tự restart khi crash, tự lên khi boot, không phụ thuộc VSCode) thì cài 2 service supervisor:
+
+```bash
+./webdemo/setup.sh                       # phải xong trước (merged model + vllm-venv + dist)
+./webdemo/supervisor/install_services.sh # cài service vllm + honda-backend, expose backend qua Caddy
+```
+
+Việc script làm (idempotent): copy `webdemo/supervisor/{vllm,honda-backend}.sh` → `/opt/supervisor-scripts/`,
+`*.conf` → `/etc/supervisor/conf.d/`, thêm mục **Honda Demo** (external 10100 → internal 8600) vào
+`/etc/portal.yaml`, rồi `supervisorctl reread/update` + restart caddy. vLLM load ~3 phút lần đầu.
+
+- Điều khiển: `supervisorctl status | restart vllm | restart honda-backend`. Log: `/var/log/portal/vllm.log`.
+- **Public URL** (Caddy + token chung của instance): `http://$PUBLIC_IPADDR:$VAST_TCP_PORT_10100/?token=$OPEN_BUTTON_TOKEN`.
+  Token = `echo $OPEN_BUTTON_TOKEN` (mở luôn Jupyter/Portal → chỉ đưa người tin tưởng; đang là HTTP, token đi chữ thô).
+- Riêng tư hơn: bỏ public bằng cách xoá mục "Honda Demo" khỏi `/etc/portal.yaml` + restart caddy, rồi
+  SSH-forward `ssh -p <VAST_TCP_PORT_22> -L 8600:127.0.0.1:8600 root@<PUBLIC_IP>` → mở `localhost:8600`.

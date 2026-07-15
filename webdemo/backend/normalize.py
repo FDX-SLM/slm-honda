@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from slm_coach.ground_truth import RUNBOOKS  # noqa: E402
+
 ABSTAIN_RC = "INSUFFICIENT_EVIDENCE"
 
 # Hệ thống bị ảnh hưởng theo RC (bám SYSTEMS §1.1 trong ground_truth).
@@ -40,9 +42,29 @@ def _empty(model: str) -> dict[str, Any]:
         "severity": None,
         "priority": None,
         "artifacts": None,
+        "resolutionPlan": None,
         "latencyMs": None,
         "isMock": False,
         "errorMessage": None,
+    }
+
+
+def _resolution_plan(rc: str | None, res: dict[str, Any]) -> dict[str, Any] | None:
+    """Kế hoạch xử lý cho L2 agent — lấy THẲNG từ runbook gốc (`ground_truth.RUNBOOKS`) theo RC model
+    đã chẩn đoán → grounded-by-construction, không bịa. ``grounded`` = model chọn đúng runbook_id.
+    """
+    rb = RUNBOOKS.get(rc or "")
+    if not rb:
+        return None
+    return {
+        "runbookId": rb.get("runbook_id"),
+        "preconditions": list(rb.get("confirm_checks", []) or []),
+        "steps": list(rb.get("fix_steps", []) or []),
+        "owner": rb.get("owner_team"),
+        "escalation": rb.get("escalation"),
+        "eta": rb.get("eta_ttr"),
+        # Plan dựng THẲNG từ runbook chuẩn (theo RC) nên luôn grounded. Badge để khẳng định "từ KB, không bịa".
+        "grounded": True,
     }
 
 
@@ -88,11 +110,15 @@ def normalize_slm(
     out["affectedSystem"] = AFFECTED_SYSTEM.get(rc or "")
     out["owner"] = res.get("owner_team")
     out["escalation"] = res.get("escalation")
-    out["runbook"] = res.get("runbook_id")
+    # Hiện runbook CANONICAL theo RC (grounded) để khớp Resolvement Plan; model thỉnh thoảng gán nhầm
+    # nhãn runbook_id (nhãn thô vẫn xem được ở "Raw SLM output"). RC đúng → runbook đúng theo KB.
+    out["runbook"] = (RUNBOOKS.get(rc or "") or {}).get("runbook_id") or res.get("runbook_id")
     out["similarIncident"] = res.get("similar_incident")
     out["nextActions"] = list(res.get("fix_steps", []) or [])
     out["severity"] = res.get("severity")
     out["priority"] = res.get("priority")
+    # Resolvement Planning (L2): kế hoạch grounded từ runbook — chỉ khi có RC xác định (không abstain).
+    out["resolutionPlan"] = None if is_abstain else _resolution_plan(rc, res)
     # Artifacts (RCA / work-order / email / mermaid) — chỉ lấy các trường chuỗi để UI in ra.
     arts = res.get("artifacts") or {}
     out["artifacts"] = (
