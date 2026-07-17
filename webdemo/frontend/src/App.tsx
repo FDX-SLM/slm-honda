@@ -170,8 +170,6 @@ function InternalView({ d }: { d: NormalizedDiagnosis }) {
           </ul>
         </>
       )}
-      {/* Resolvement Planning (L2) + de-dup CHỈ áp cho ca cache-stale; các ca khác giữ nguyên như cũ. */}
-      {isCache && <ResolutionPlanPanel p={d.resolutionPlan} />}
       <div className="fields">
         <Field label="Affected system" value={d.affectedSystem} />
         <Field label="Owner" value={d.owner} />
@@ -181,17 +179,24 @@ function InternalView({ d }: { d: NormalizedDiagnosis }) {
         <Field label="Severity" value={d.severity} />
         <Field label="Priority" value={d.priority} />
       </div>
-      {!isCache && d.nextActions.length > 0 && (
-        <>
-          <div className="block-label">Next actions</div>
-          <ol className="steps">
-            {d.nextActions.map((a, i) => (
-              <li key={i}>{a}</li>
-            ))}
-          </ol>
-        </>
-      )}
-      <Artifacts a={d.artifacts} />
+      {/* Ca eligibility (non-cache): Next actions chuyển xuống NGAY SAU khối RCA (slot afterRca). */}
+      <Artifacts
+        a={d.artifacts}
+        afterRca={
+          !isCache && d.nextActions.length > 0 ? (
+            <>
+              <div className="block-label">Next actions</div>
+              <ol className="steps">
+                {d.nextActions.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ol>
+            </>
+          ) : null
+        }
+      />
+      {/* Resolvement Planning (L2) + de-dup CHỈ áp cho ca cache-stale; các ca khác giữ nguyên như cũ. */}
+      {isCache && <ResolutionPlanPanel p={d.resolutionPlan} />}
     </>
   );
 }
@@ -220,7 +225,13 @@ function ResolutionPlanPanel({ p }: { p?: ResolutionPlan | null }) {
   );
 }
 
-function Artifacts({ a }: { a: NormalizedDiagnosis["artifacts"] }) {
+function Artifacts({
+  a,
+  afterRca = null,
+}: {
+  a: NormalizedDiagnosis["artifacts"];
+  afterRca?: ReactNode;
+}) {
   if (!a) return null;
   return (
     <>
@@ -232,6 +243,7 @@ function Artifacts({ a }: { a: NormalizedDiagnosis["artifacts"] }) {
           </div>
         </>
       )}
+      {afterRca}
       {a.customerEmail && (
         <>
           <div className="block-label">Customer email</div>

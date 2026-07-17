@@ -25,6 +25,10 @@ BASE = os.environ.get("HONDA_BASE", "Qwen/Qwen3.5-9B")
 ADAPTER = os.environ.get("HONDA_ADAPTER", "checkpoints/sft/best")
 FOUR_BIT = os.environ.get("HONDA_4BIT", "true").strip().lower() not in ("false", "0", "no")
 MAX_NEW_TOKENS = int(os.environ.get("HONDA_MAX_NEW_TOKENS", "1700"))
+# Chống degeneration lặp: ca ELIGIBILITY_RULE_CONFLICT dễ kẹt vòng lặp customer_self_service
+# (đẻ tier vô hạn "…credit the month" → JSON không đóng → parse lỗi). 1.05 phá vòng lặp mà KHÔNG
+# đổi root cause; 1.1 quá mạnh (làm sai RC các ca khác). Áp cho cả 3 đường sinh (vllm/stream/hf).
+REPETITION_PENALTY = float(os.environ.get("HONDA_REPETITION_PENALTY", "1.05"))
 
 # `artifacts` (rca_md/work_order_md/customer_email/diagram_mermaid) là key CUỐI & NẶNG nhất của JSON.
 # CHỈ ca hướng dẫn khách (TCU) mới không cần nó → chặn sinh từ đúng chỗ này để nhanh hơn ~1.4x.
@@ -122,6 +126,7 @@ def _run_vllm(complaint: str, skip_artifacts: bool) -> tuple[str, int, int | Non
         ],
         "temperature": 0,
         "max_tokens": MAX_NEW_TOKENS,
+        "repetition_penalty": REPETITION_PENALTY,
     }
     if skip_artifacts:
         payload["stop"] = [_ARTIFACTS_STOP]  # dừng trước khối artifacts (vLLM loại chuỗi stop)
@@ -149,6 +154,7 @@ def _stream_vllm(complaint: str, skip_artifacts: bool):
         ],
         "temperature": 0,
         "max_tokens": MAX_NEW_TOKENS,
+        "repetition_penalty": REPETITION_PENALTY,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -258,6 +264,7 @@ def _run_hf(complaint: str, skip_artifacts: bool) -> tuple[str, int, int | None]
     gen_kwargs: dict[str, object] = {
         "max_new_tokens": MAX_NEW_TOKENS,
         "do_sample": False,
+        "repetition_penalty": REPETITION_PENALTY,
         "pad_token_id": tok.pad_token_id or tok.eos_token_id,
     }
     if skip_artifacts:  # transformers >=4.38: dừng khi gặp chuỗi (cần truyền tokenizer)
